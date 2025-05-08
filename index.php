@@ -20,8 +20,22 @@ if (!file_exists(TEMP_DIR)) {
     mkdir(TEMP_DIR, 0777, true);
 }
 
-// Set webhook or use polling
-$update = json_decode(file_get_contents('php://input'), true);
+// Simple lock file to prevent concurrent processing per user
+function acquireLock($chat_id) {
+    $lock_file = TEMP_DIR . "lock_$chat_id";
+    if (file_exists($lock_file) && (time() - filemtime($lock_file)) < 300) {
+        return false; // Lock exists and is recent (5 minutes)
+    }
+    file_put_contents($lock_file, time());
+    return true;
+}
+
+function releaseLock($chat_id) {
+    $lock_file = TEMP_DIR . "lock_$chat_id";
+    if (file_exists($lock_file)) {
+        unlink($lock_file);
+    }
+}
 
 // Telegram API request function
 function sendTelegramRequest($method, $params = []) {
@@ -138,6 +152,7 @@ function processCredential($credential, &$results, &$failed_count, &$invalid_cou
 }
 
 // Handle incoming updates
+$update = json_decode(file_get_contents('php://input'), true);
 if ($update) {
     $chat_id = $update['message']['chat']['id'] ?? $update['callback_query']['message']['chat']['id'] ?? null;
     $message = $update['message'] ?? null;
@@ -198,12 +213,24 @@ if ($update) {
             exit;
         }
 
+        // Check for existing processing lock
+        if (!acquireLock($chat_id)) {
+            sendMessage($chat_id, "Another request is being processed. Please wait a few minutes and try again.");
+            exit;
+        }
+
         // Download JSON file
         $file_id = $message['document']['file_id'];
         $file = sendTelegramRequest('getFile', ['file_id' => $file_id]);
+        if (!isset($file['result']['file_path'])) {
+            sendMessage($chat_id, "Error downloading the file. Please try again.");
+            releaseLock($chat_id);
+            exit;
+        }
+
         $file_path = $file['result']['file_path'];
         $file_url = "https://api.telegram.org/file/bot" . BOT_TOKEN . "/$file_path";
-        $local_file = TEMP_DIR . $message['document']['file_name'];
+        $local_file = TEMP_DIR . "input_" . $chat_id . "_" . time() . ".json";
         file_put_contents($local_file, file_get_contents($file_url));
 
         // Parse JSON
@@ -212,6 +239,7 @@ if ($update) {
         if (json_last_error() !== JSON_ERROR_NONE || !is_array($credentials)) {
             sendMessage($chat_id, "Invalid JSON format! Please send a valid JSON file.");
             unlink($local_file);
+            releaseLock($chat_id);
             exit;
         }
 
@@ -296,21 +324,27 @@ if ($update) {
                    "Time: " . number_format($processing_time, 2) . "s\n" .
                    "API use: " . count(API_BASE_URLS);
 
-        // Save results to JSON file
-        $output_file = TEMP_DIR . "jwt_results_" . time() . ".json";
+        // Save results to a single JSON file
+        $output_file = TEMP_DIR . "jwt_results_" . $chat_id . "_" . time() . ".json";
         file_put_contents($output_file, json_encode($results, JSON_PRETTY_PRINT));
 
         // Send summary and file
         editMessage($chat_id, $message_id, $summary);
-        $send_result = sendDocument($chat_id, $output_file, "✅ Processing completed! Here are your JWT tokens.");
+        $send_result = sendDocument($chat_id, $output_file, "✅ Processing completed! Here is your JWT tokens file.");
+
+        // Clean up immediately
+        if (file_exists($local_file)) {
+            unlink($local_file);
+        }
+        if (file_exists($output_file)) {
+            unlink($output_file);
+        }
+        releaseLock($chat_id);
 
         if (!$send_result['ok']) {
-            sendMessage($chat_id, "✅ Processing completed but there was an error sending results. Please try again.");
+            sendMessage($chat_id, "✅ Processing completed, but there was an error sending the results. Error: " . ($send_result['description'] ?? 'Unknown error') . ". Please try again.");
+            exit;
         }
-
-        // Clean up
-        unlink($local_file);
-        unlink($output_file);
     }
 }
 
