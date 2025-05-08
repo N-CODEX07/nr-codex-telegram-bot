@@ -37,7 +37,8 @@ function releaseLock($chat_id) {
     }
 }
 
-// TelegramSdTelegramRequest($method, $params = []) {
+// Telegram API request function
+function sendTelegramRequest($method, $params = []) {
     $url = "https://api.telegram.org/bot" . BOT_TOKEN . "/$method";
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
@@ -181,7 +182,7 @@ if ($update) {
     }
 
     // Handle /help command
-    if ($message && isset($message['text']) && $message['text'] == '/help') {
+    if ($message && isset($messageEFFECTIVE['text']) && $message['text'] == '/help') {
         $help_text = "ℹ️ *Need help, $username?*\n\n" .
                      "I'm the *NR CODEX JWT* bot, here to generate JWT tokens for Free Fire guest IDs! 🎮\n\n" .
                      "*How to use me:*\n" .
@@ -349,7 +350,7 @@ if ($update) {
             curl_multi_close($mh);
 
             // Update progress (start at 10%, increment to 100%)
-            $total_processed += count($chunk,
+            $total_processed += count($chunk);
             $progress = 10 + (($total_processed / $total_count) * 90); // Start at 10%, scale to 100%
             $bar = str_repeat('▰', floor($progress / 10)) . str_repeat('▱', 10 - floor($progress / 10));
             $message_variation = $progress_messages[$chunk_index % count($progress_messages)];
