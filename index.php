@@ -153,7 +153,7 @@ if ($update) {
         $reply_markup = [
             'inline_keyboard' => [
                 [
-                    ['text' => 'Join Channel', 'url' => 'https://t.me/nr_codes'],
+                    ['text' => 'Join Channel', 'url' => 'https://t.me/nr_codex'],
                     ['text' => 'Check', 'callback_data' => 'check_membership'],
                 ],
             ],
@@ -176,7 +176,7 @@ if ($update) {
             editMessage($chat_id, $message_id, "Please join our channel first!", [
                 'inline_keyboard' => [
                     [
-                        ['text' => 'Join Channel', 'url' => 'https://t.me/nr_codes'],
+                        ['text' => 'Join Channel', 'url' => 'https://t.me/nr_codex'],
                         ['text' => 'Check', 'callback_data' => 'check_membership'],
                     ],
                 ],
@@ -190,7 +190,7 @@ if ($update) {
             sendMessage($chat_id, "Please join our channel first!", [
                 'inline_keyboard' => [
                     [
-                        ['text' => 'Join Channel', 'url' => 'https://t.me/nr_codes'],
+                        ['text' => 'Join Channel', 'url' => 'https://t.me/nr_codex'],
                         ['text' => 'Check', 'callback_data' => 'check_membership'],
                     ],
                 ],
