@@ -2,7 +2,7 @@
 
 // Bot configuration
 define('BOT_TOKEN', '7711988726:AAGimofS_-3_2zU1xu9e7DQalJ756nj3hKI');
-define('CHANNEL_USERNAME', '@nr_codes');
+define('CHANNEL_USERNAME', '@nr_codex');
 define('API_BASE_URLS', [
     'https://akiru-jwt-5.vercel.app/token?uid={Uid}&password={Password}',
     'https://akiru-jwt-6.vercel.app/token?uid={Uid}&password={Password}',
