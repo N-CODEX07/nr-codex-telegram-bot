@@ -37,8 +37,7 @@ function releaseLock($chat_id) {
     }
 }
 
-// Telegram API request function
-function sendTelegramRequest($method, $params = []) {
+// TelegramSdTelegramRequest($method, $params = []) {
     $url = "https://api.telegram.org/bot" . BOT_TOKEN . "/$method";
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
@@ -213,8 +212,7 @@ if ($update) {
                          "*What I’ll do:*\n" .
                          "⚡ Process up to 55 accounts at once using 5 APIs\n" .
                          "🔄 Retry failed accounts up to 10 times\n" .
-                         "📄 Send you a single JSON file with all your JWT tokens\n\n" .
-                         "Need help? Use /help or ask in *[@nr_codex](https://t.me/nr_codex)*! 😊";
+                         "📄 Send you a single JSON file with all your JWT tokens\n\n";
             editMessage($chat_id, $message_id, $info_text);
         } else {
             $error_text = "😕 *Oops, $username!* You haven’t joined *[@nr_codex](https://t.me/nr_codex)* yet.\n\n" .
@@ -291,17 +289,18 @@ if ($update) {
         $invalid_count = 0;
 
         // Send initial processing message
-        $progress_message = sendMessage($chat_id, "⏳ *Working on it, $username!* Processing your $total_count accounts... ▰▱▱▱▱▱▱▱▱▱ 0%");
+        $progress_message = sendMessage($chat_id, "⏳ *Working on it, $username!* Processing your $total_count accounts...\n\n" .
+                                          "▰▱▱▱▱▱▱▱▱▱ 10%");
         $message_id = $progress_message['result']['message_id'];
 
         // Process credentials in chunks for concurrency
         $chunks = array_chunk($credentials, CONCURRENT_REQUESTS);
-        $progress = 0;
+        $total_chunks = count($chunks);
         $total_processed = 0;
         $progress_messages = [
-            "🔥 *Blazing through, $username!* Fetching tokens... ",
-            "⚡ *Almost there, $username!* Processing your accounts... ",
-            "🚀 *Speeding up, $username!* Generating tokens... ",
+            "🔥 *Blazing through, $username!* Fetching tokens...\n\n",
+            "⚡ *Almost there, $username!* Processing your accounts...\n\n",
+            "🚀 *Speeding up, $username!* Generating tokens...\n\n",
         ];
 
         foreach ($chunks as $chunk_index => $chunk) {
@@ -349,12 +348,12 @@ if ($update) {
 
             curl_multi_close($mh);
 
-            // Update progress
-            $total_processed += count($chunk);
-            $progress = ($total_processed / $total_count) * 100;
+            // Update progress (start at 10%, increment to 100%)
+            $total_processed += count($chunk,
+            $progress = 10 + (($total_processed / $total_count) * 90); // Start at 10%, scale to 100%
             $bar = str_repeat('▰', floor($progress / 10)) . str_repeat('▱', 10 - floor($progress / 10));
             $message_variation = $progress_messages[$chunk_index % count($progress_messages)];
-            editMessage($chat_id, $message_id, "$message_variation ▰ $bar " . number_format($progress, 2) . "%");
+            editMessage($chat_id, $message_id, "$message_variation$bar " . number_format($progress, 2) . "%");
         }
 
         // Calculate processing time
