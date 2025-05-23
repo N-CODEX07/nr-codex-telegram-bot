@@ -1,14 +1,9 @@
 <?php
 
 // Bot configuration
-define('BOT_TOKEN', '7336854248:AAFlHQIDHfg3keMtDhwNpxqQ_fBzOupbZGc');
+define('BOT_TOKEN', '7711988726:AAEI3GRUWDf3_4Lhhs9G9lW3Ympwvi2zk8M');
 define('CHANNEL_USERNAME', '@nr_codex');
 define('API_BASE_URLS', [
-    'https://akiru-jwt-5.vercel.app/token?uid={Uid}&password={Password}',
-    'https://akiru-jwt-6.vercel.app/token?uid={Uid}&password={Password}',
-    'https://akiru-jwt-7.vercel.app/token?uid={Uid}&password={Password}',
-    'https://akiru-jwt-8.vercel.app/token?uid={Uid}&password={Password}',
-    'https://akiru-jwt-9.vercel.app/token?uid={Uid}&password={Password}',
     'https://akiru-jwt-10.vercel.app/token?uid={Uid}&password={Password}',
 ]);
 define('MAX_RETRIES', 10);
@@ -130,7 +125,7 @@ function processCredential($credential, &$results, &$failed_count, &$invalid_cou
     $attempts = 0;
     $success = false;
     while ($attempts < MAX_RETRIES && !$success) {
-        $api_url = API_BASE_URLS[array_rand(API_BASE_URLS)];
+        $api_url = API_BASE_URLS[0]; // Use the single API endpoint
         $result = fetchJwtToken($uid, $password, $api_url);
         $attempts++;
 
@@ -193,7 +188,7 @@ if ($update) {
                              "[\n  {\"uid\": \"1234567890\", \"password\": \"PASSWORD1\"},\n  {\"uid\": \"0987654321\", \"password\": \"PASSWORD2\"}\n]\n" .
                              "```\n\n" .
                              "*What I’ll do:*\n" .
-                             "⚡ Process up to 55 accounts at once using 6 APIs\n" .
+                             "⚡ Process up to 55 accounts at once\n" .
                              "🔄 Retry failed accounts up to 10 times\n" .
                              "📄 Send you a single JSON file with all your JWT tokens\n\n";
                 editMessage($chat_id, $message_id, $info_text);
@@ -300,7 +295,7 @@ if ($update) {
 
             foreach ($chunk as $credential) {
                 $ch = curl_init();
-                $api_url = API_BASE_URLS[array_rand(API_BASE_URLS)];
+                $api_url = API_BASE_URLS[0]; // Use the single API endpoint
                 $url = str_replace(['{Uid}', '{Password}'], [urlencode($credential['uid'] ?? ''), urlencode($credential['password'] ?? '')], $api_url);
                 curl_setopt($ch, CURLOPT_URL, $url);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -360,7 +355,7 @@ if ($update) {
                    "❌ Failed: $failed_count\n" .
                    "⚠️ Invalid: $invalid_count\n" .
                    "⏱️ Time Taken: $processing_time_min min\n" .
-                   "🌐 APIs Used: " . count(API_BASE_URLS) . "\n\n" .
+                   "🌐 APIs Used: 1\n\n" .
                    "Your tokens are in the file below! 📄\n" .
                    "Need more? Upload another JSON! 😊";
 
@@ -385,7 +380,7 @@ if ($update) {
             unlink($local_file);
         }
         if (file_exists($output_file)) {
-            unlink($output_file);
+            unlink($local_file);
         }
         releaseLock($chat_id);
 
