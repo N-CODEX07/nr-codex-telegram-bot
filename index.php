@@ -3,6 +3,7 @@
 // Bot configuration
 define('BOT_TOKEN', '7336854248:AAFlHQIDHfg3keMtDhwNpxqQ_fBzOupbZGc');
 define('CHANNEL_USERNAME', '@nr_codex');
+define('BOT_NAME', 'NR CODEX JWT'); // New configuration for bot name
 define('API_BASE_URLS', [
     'https://akiru-jwt-10.vercel.app/token?uid={Uid}&password={Password}',
 ]);
@@ -170,14 +171,14 @@ if ($update) {
 
     // Handle /start command
     if ($message && isset($message['text']) && $message['text'] == '/start') {
-        $welcome_text = "👋 *Hey $username!* Welcome to *NR CODEX JWT*! 🚀\n\n" .
+        $welcome_text = "👋 *Hey $username!* Welcome to *" . BOT_NAME . "*! 🚀\n\n" .
                         "I'm your go-to bot for generating JWT tokens for Free Fire guest IDs. To get started, please join our official Telegram channel for updates and support:\n\n" .
-                        "📢 *[@nr_codex](https://t.me/nr_codex)*\n\n" .
+                        "📢 *" . CHANNEL_USERNAME . "*\n\n" .
                         "Click below to join and verify your membership! 😊";
         $reply_markup = [
             'inline_keyboard' => [
                 [
-                    ['text' => 'Join Channel 🌟', 'url' => 'https://t.me/nr_codex'],
+                    ['text' => 'Join Channel 🌟', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
                     ['text' => 'Verify ✅', 'callback_data' => 'check_membership'],
                 ],
             ],
@@ -192,8 +193,8 @@ if ($update) {
 
         if ($data == 'check_membership') {
             if (isChannelMember($chat_id)) {
-                $info_text = "🎉 *Awesome, $username!* You're a member of *[@nr_codex](https://t.me/nr_codex)*! 🙌\n" .
-                             "*NR CODEX JWT Bot* is ready to roll! 🚀\n" .
+                $info_text = "🎉 *Awesome, $username!* You're a member of our family! 🙌\n" .
+                             "*" . BOT_NAME . " Bot* is ready to roll! 🚀\n" .
                              "Send me a JSON file with your Free Fire guest ID credentials in this format:\n\n" .
                              "```json\n" .
                              "[\n  {\"uid\": \"1234567890\", \"password\": \"PASSWORD1\"},\n  {\"uid\": \"0987654321\", \"password\": \"PASSWORD2\"}\n]\n" .
@@ -204,13 +205,13 @@ if ($update) {
                              "📄 Send you a single JSON file with all your JWT tokens\n\n";
                 editMessage($chat_id, $message_id, $info_text);
             } else {
-                $error_text = "😕 *Oops, $username!* You haven’t joined *[@nr_codex](https://t.me/nr_codex)* yet.\n\n" .
+                $error_text = "😕 *Oops, $username!* You haven’t joined yet.\n\n" .
                               "Please join our channel to use the bot. It’s where we share updates and support! 📢\n\n" .
                               "Click below to join and try again! 👇";
                 editMessage($chat_id, $message_id, $error_text, [
                     'inline_keyboard' => [
                         [
-                            ['text' => 'Join Channel 🌟', 'url' => 'https://t.me/nr_codex'],
+                            ['text' => 'Join Channel 🌟', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
                             ['text' => 'Verify ✅', 'callback_data' => 'check_membership'],
                         ],
                     ],
@@ -273,11 +274,11 @@ if ($update) {
     // Handle JSON file upload
     if ($message && isset($message['document']) && $message['document']['mime_type'] == 'application/json') {
         if (!isChannelMember($chat_id)) {
-            sendMessage($chat_id, "😕 *Sorry, $username!* You need to join *[@nr_codex](https://t.me/nr_codex)* first.\n\n" .
+            sendMessage($chat_id, "😕 *Sorry, $username!* You need to join first.\n\n" .
                                  "Click below to join and unlock the bot! 👇", [
                 'inline_keyboard' => [
                     [
-                        ['text' => 'Join Channel 🌟', 'url' => 'https://t.me/nr_codex'],
+                        ['text' => 'Join Channel 🌟', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
                         ['text' => 'Verify ✅', 'callback_data' => 'check_membership'],
                     ],
                 ],
@@ -288,7 +289,7 @@ if ($update) {
         // Check for existing processing lock
         if (!acquireLock($chat_id)) {
             sendMessage($chat_id, "⏳ *Hold on, $username!* I’m still processing your previous request.\n\n" .
-                                 "Please wait a minute and try again. If this persists, contact *[@nr_codex](https://t.me/nr_codex)* for help! 😊");
+                                 "Please wait a minute 😊");
             exit;
         }
 
@@ -297,7 +298,7 @@ if ($update) {
         $file = sendTelegramRequest('getFile', ['file_id' => $file_id]);
         if (!isset($file['result']['file_path'])) {
             sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your file.\n\n" .
-                                 "Please try uploading it again. If the issue continues, check with *[@nr_codex](https://t.me/nr_codex)*! 😔");
+                                 "Please try uploading it again. If the issue continues, contact support! 😔");
             releaseLock($chat_id);
             exit;
         }
@@ -316,7 +317,7 @@ if ($update) {
                                  "```json\n" .
                                  "[\n  {\"uid\": \"1234567890\", \"password\": \"PASSWORD1\"},\n  {\"uid\": \"0987654321\", \"password\": \"PASSWORD2\"}\n]\n" .
                                  "```\n\n" .
-                                 "Check your file and try again. Need help? Ask in *[@nr_codex](https://t.me/nr_codex)*! 😊");
+                                 "Check your file and try again. Need help? Contact support! 😊");
             unlink($local_file);
             releaseLock($chat_id);
             exit;
@@ -340,11 +341,29 @@ if ($update) {
     }
 }
 
+// Function to get progress bar
+function getProgressBar($progress) {
+    $bars = [
+        10 => '▰▱▱▱▱▱▱▱▱▱ 10%',
+        20 => '▰▰▱▱▱▱▱▱▱▱ 20%',
+        30 => '▰▰▰▱▱▱▱▱▱▱ 30%',
+        40 => '▰▰▰▰▱▱▱▱▱▱ 40%',
+        50 => '▰▰▰▰▰▱▱▱▱▱ 50%',
+        60 => '▰▰▰▰▰▰▱▱▱▱ 60%',
+        70 => '▰▰▰▰▰▰▰▱▱▱ 70%',
+        80 => '▰▰▰▰▰▰▰▰▱▱ 80%',
+        90 => '▰▰▰▰▰▰▰▰▰▱ 90%',
+        100 => '▰▰▰▰▰▰▰▰▰▰ 100%'
+    ];
+    $progress = min(100, max(10, round($progress / 10) * 10));
+    return $bars[$progress];
+}
+
 // Function to process credentials
 function processCredentials($chat_id, $message_id, $username, $credentials, $total_count, $local_file) {
     if (!acquireLock($chat_id)) {
         sendMessage($chat_id, "⏳ *Hold on, $username!* I’m still processing your previous request.\n\n" .
-                             "Please wait a minute and try again. If this persists, contact *[@nr_codex](https://t.me/nr_codex)* for help! 😊");
+                             "Please wait a minute and try again. If this persists, contact support! 😊");
         return;
     }
 
@@ -358,7 +377,7 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
     // Send initial processing message
     $progress_message = sendMessage($chat_id, "⏳ *Working on it, $username!* Processing your $total_count accounts...");
     $progress_message_id = $progress_message['result']['message_id'];
-    $progress_bar_message = sendMessage($chat_id, "▰▱▱▱▱▱▱▱▱▱ 10%");
+    $progress_bar_message = sendMessage($chat_id, getProgressBar(10));
     $progress_bar_message_id = $progress_bar_message['result']['message_id'];
 
     // Process credentials in chunks for concurrency
@@ -419,12 +438,15 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
         // Update progress bar (10% to 100%)
         $total_processed += count($chunk);
         $progress = 10 + (($total_processed / $total_count) * 90);
-        $bar = str_repeat('▰', floor($progress / 10)) . str_repeat('▱', 10 - floor($progress / 10));
-        editMessage($chat_id, $progress_bar_message_id, "$bar " . number_format($progress, 2) . "%");
+        $progress_bar = getProgressBar($progress);
+        editMessage($chat_id, $progress_bar_message_id, $progress_bar);
         if ($chunk_index < count($progress_messages)) {
             editMessage($chat_id, $progress_message_id, $progress_messages[$chunk_index]);
         }
     }
+
+    // Ensure final progress bar shows 100%
+    editMessage($chat_id, $progress_bar_message_id, getProgressBar(100));
 
     // Calculate processing time
     $processing_time = microtime(true) - $start_time;
@@ -492,7 +514,7 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
     if (!$send_result['ok']) {
         sendMessage($chat_id, "❌ *Oops, $username!* I processed your tokens, but couldn’t send the file. 😔\n\n" .
                              "Error: " . ($send_result['description'] ?? 'Unknown error') . "\n\n" .
-                             "Please try again or contact *[@nr_codex](https://t.me/nr_codex)* for help! 🙏");
+                             "Please try again or contact support! 🙏");
         exit;
     }
 }
