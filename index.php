@@ -1,7 +1,7 @@
 <?php
 
 // Bot configuration
-define('BOT_TOKEN', '7711988726:AAEI3GRUWDf3_4Lhhs9G9lW3Ympwvi2zk8M');
+define('BOT_TOKEN', '7336854248:AAFlHQIDHfg3keMtDhwNpxqQ_fBzOupbZGc');
 define('CHANNEL_USERNAME', '@nr_codex');
 define('API_BASE_URLS', [
     'https://akiru-jwt-10.vercel.app/token?uid={Uid}&password={Password}',
