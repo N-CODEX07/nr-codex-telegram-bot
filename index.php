@@ -1,7 +1,7 @@
 <?php
 
 // Telegram Bot Token
-$botToken = "7336854248:AAFlHQIDHfg3keMtDhwNpxqQ_fBzOupbZGc";
+$botToken = "7711988726:AAEI3GRUWDf3_4Lhhs9G9lW3Ympwvi2zk8M";
 $apiUrl = "https://api.telegram.org/bot$botToken/";
 $channelLink = "https://t.me/nr_codex";
 $jwtApiUrl = "https://akiru-jwt-10.vercel.app/token?uid={Uid}&password={Password}";
@@ -66,11 +66,43 @@ function isChannelMember($chatId, $userId) {
     return isset($data['result']['status']) && in_array($data['result']['status'], ['member', 'administrator', 'creator']);
 }
 
+// Log incoming updates for debugging
+function logUpdate($data) {
+    file_put_contents('debug.log', print_r($data, true) . "\n", FILE_APPEND);
+}
+
 // Main bot logic
 $update = json_decode(file_get_contents('php://input'), true);
-$chatId = $update['message']['chat']['id'] ?? $update['callback_query']['message']['chat']['id'];
-$userId = $update['message']['from']['id'] ?? $update['callback_query']['from']['id'];
-$username = $update['message']['from']['username'] ?? $update['callback_query']['from']['username'] ?? 'User';
+
+// Log the update for debugging
+logUpdate($update);
+
+// Validate update
+if (!is_array($update) || empty($update)) {
+    error_log("Invalid or empty update received");
+    exit;
+}
+
+// Extract chatId, userId, and username with null checks
+$chatId = null;
+$userId = null;
+$username = 'User';
+
+if (isset($update['message']['chat']['id'])) {
+    $chatId = $update['message']['chat']['id'];
+    $userId = $update['message']['from']['id'] ?? null;
+    $username = $update['message']['from']['username'] ?? 'User';
+} elseif (isset($update['callback_query']['message']['chat']['id'])) {
+    $chatId = $update['callback_query']['message']['chat']['id'];
+    $userId = $update['callback_query']['from']['id'] ?? null;
+    $username = $update['callback_query']['from']['username'] ?? 'User';
+}
+
+if (!$chatId || !$userId) {
+    error_log("Missing chatId or userId in update");
+    exit;
+}
+
 $messageText = $update['message']['text'] ?? '';
 $callbackData = $update['callback_query']['data'] ?? '';
 
@@ -126,8 +158,18 @@ if ($messageText == '/start') {
         exit;
     }
 
-    $fileId = $update['message']['document']['file_id'];
-    $filePath = json_decode(file_get_contents($apiUrl . "getFile?file_id=$fileId"), true)['result']['file_path'];
+    $fileId = $update['message']['document']['file_id'] ?? null;
+    if (!$fileId) {
+        sendMessage($chatId, "❌ Error: No valid file found in the message.");
+        exit;
+    }
+
+    $filePath = json_decode(file_get_contents($apiUrl . "getFile?file_id=$fileId"), true)['result']['file_path'] ?? null;
+    if (!$filePath) {
+        sendMessage($chatId, "❌ Error: Could not retrieve file path.");
+        exit;
+    }
+
     $fileUrl = "https://api.telegram.org/file/bot$botToken/$filePath";
     $jsonContent = file_get_contents($fileUrl);
     $accounts = json_decode($jsonContent, true);
