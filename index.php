@@ -181,52 +181,43 @@ if ($update) {
         sendMessage($chat_id, $welcome_text, $reply_markup);
     }
 
-    // Handle /help command
-    if ($message && isset($messageEFFECTIVE['text']) && $message['text'] == '/help') {
-        $help_text = "ℹ️ *Need help, $username?*\n\n" .
-                     "I'm the *NR CODEX JWT* bot, here to generate JWT tokens for Free Fire guest IDs! 🎮\n\n" .
-                     "*How to use me:*\n" .
-                     "1. Join our channel: *[@nr_codex](https://t.me/nr_codex)* (click /start to verify).\n" .
-                     "2. Send a JSON file with your credentials in this format:\n" .
-                     "```json\n" .
-                     "[\n  {\"uid\": \"1234567890\", \"password\": \"PASSWORD1\"},\n  {\"uid\": \"0987654321\", \"password\": \"PASSWORD2\"}\n]\n" .
-                     "```\n" .
-                     "3. Wait for me to process and send back your JWT tokens! ⚡\n\n" .
-                     "*Features:*\n" .
-                     "⚡ Uses 5 APIs for super-fast processing\n" .
-                     "🔄 Retries failed attempts up to 10 times\n" .
-                     "💯 Handles invalid credentials gracefully\n\n" .
-                     "Stuck? Join *[@nr_codex](https://t.me/nr_codex)* for support or try /start again! 😄";
-        sendMessage($chat_id, $help_text);
-    }
-
-    // Handle callback query (Verify button)
-    if ($callback_query && $callback_query['data'] == 'check_membership') {
+    // Handle callback query (Verify or Generate Again)
+    if ($callback_query) {
         $message_id = $callback_query['message']['message_id'];
-        if (isChannelMember($chat_id)) {
-            $info_text = "🎉 *Awesome, $username!* You're a member of *[@nr_codex](https://t.me/nr_codex)*! 🙌\n\n" .
-                         "*NR CODEX JWT Bot* is ready to roll! 🚀\n" .
-                         "Send me a JSON file with your Free Fire guest ID credentials in this format:\n\n" .
+        if ($callback_query['data'] == 'check_membership') {
+            if (isChannelMember($chat_id)) {
+                $info_text = "🎉 *Awesome, $username!* You're a member of *[@nr_codex](https://t.me/nr_codex)*! 🙌\n" .
+                             "*NR CODEX JWT Bot* is ready to roll! 🚀\n" .
+                             "Send me a JSON file with your Free Fire guest ID credentials in this format:\n\n" .
+                             "```json\n" .
+                             "[\n  {\"uid\": \"1234567890\", \"password\": \"PASSWORD1\"},\n  {\"uid\": \"0987654321\", \"password\": \"PASSWORD2\"}\n]\n" .
+                             "```\n\n" .
+                             "*What I’ll do:*\n" .
+                             "⚡ Process up to 55 accounts at once using 6 APIs\n" .
+                             "🔄 Retry failed accounts up to 10 times\n" .
+                             "📄 Send you a single JSON file with all your JWT tokens\n\n";
+                editMessage($chat_id, $message_id, $info_text);
+            } else {
+                $error_text = "😕 *Oops, $username!* You haven’t joined *[@nr_codex](https://t.me/nr_codex)* yet.\n\n" .
+                              "Please join our channel to use the bot. It’s where we share updates and support! 📢\n\n" .
+                              "Click below to join and try again! 👇";
+                editMessage($chat_id, $message_id, $error_text, [
+                    'inline_keyboard' => [
+                        [
+                            ['text' => 'Join Channel 🌟', 'url' => 'https://t.me/nr_codex'],
+                            ['text' => 'Verify ✅', 'callback_data' => 'check_membership'],
+                        ],
+                    ],
+                ]);
+            }
+        } elseif ($callback_query['data'] == 'generate_again') {
+            $info_text = "🚀 *Ready to generate more tokens, $username?*\n\n" .
+                         "Send me another JSON file with your Free Fire guest ID credentials in this format:\n\n" .
                          "```json\n" .
                          "[\n  {\"uid\": \"1234567890\", \"password\": \"PASSWORD1\"},\n  {\"uid\": \"0987654321\", \"password\": \"PASSWORD2\"}\n]\n" .
                          "```\n\n" .
-                         "*What I’ll do:*\n" .
-                         "⚡ Process up to 55 accounts at once using 5 APIs\n" .
-                         "🔄 Retry failed accounts up to 10 times\n" .
-                         "📄 Send you a single JSON file with all your JWT tokens\n\n";
+                         "I’ll process them and send back your JWT tokens! 😄";
             editMessage($chat_id, $message_id, $info_text);
-        } else {
-            $error_text = "😕 *Oops, $username!* You haven’t joined *[@nr_codex](https://t.me/nr_codex)* yet.\n\n" .
-                          "Please join our channel to use the bot. It’s where we share updates and support! 📢\n\n" .
-                          "Click below to join and try again! 👇";
-            editMessage($chat_id, $message_id, $error_text, [
-                'inline_keyboard' => [
-                    [
-                        ['text' => 'Join Channel 🌟', 'url' => 'https://t.me/nr_codex'],
-                        ['text' => 'Verify ✅', 'callback_data' => 'check_membership'],
-                    ],
-                ],
-            ]);
         }
     }
 
@@ -276,7 +267,7 @@ if ($update) {
                                  "```json\n" .
                                  "[\n  {\"uid\": \"1234567890\", \"password\": \"PASSWORD1\"},\n  {\"uid\": \"0987654321\", \"password\": \"PASSWORD2\"}\n]\n" .
                                  "```\n\n" .
-                                 "Check your file and try again. Need help? See /help or ask in *[@nr_codex](https://t.me/nr_codex)*! 😊");
+                                 "Check your file and try again. Need help? Ask in *[@nr_codex](https://t.me/nr_codex)*! 😊");
             unlink($local_file);
             releaseLock($chat_id);
             exit;
@@ -296,7 +287,6 @@ if ($update) {
 
         // Process credentials in chunks for concurrency
         $chunks = array_chunk($credentials, CONCURRENT_REQUESTS);
-        $total_chunks = count($chunks);
         $total_processed = 0;
         $progress_messages = [
             "🔥 *Blazing through, $username!* Fetching tokens...\n\n",
@@ -351,7 +341,7 @@ if ($update) {
 
             // Update progress (start at 10%, increment to 100%)
             $total_processed += count($chunk);
-            $progress = 10 + (($total_processed / $total_count) * 90); // Start at 10%, scale to 100%
+            $progress = 10 + (($total_processed / $total_count) * 90);
             $bar = str_repeat('▰', floor($progress / 10)) . str_repeat('▱', 10 - floor($progress / 10));
             $message_variation = $progress_messages[$chunk_index % count($progress_messages)];
             editMessage($chat_id, $message_id, "$message_variation$bar " . number_format($progress, 2) . "%");
@@ -359,6 +349,7 @@ if ($update) {
 
         // Calculate processing time
         $processing_time = microtime(true) - $start_time;
+        $processing_time_min = number_format($processing_time / 60, 2); // Convert to minutes
 
         // Prepare summary
         $successful_count = count($results);
@@ -368,17 +359,25 @@ if ($update) {
                    "✅ Successful: $successful_count\n" .
                    "❌ Failed: $failed_count\n" .
                    "⚠️ Invalid: $invalid_count\n" .
-                   "⏱️ Time Taken: " . number_format($processing_time, 2) . "s\n" .
+                   "⏱️ Time Taken: $processing_time_min min\n" .
                    "🌐 APIs Used: " . count(API_BASE_URLS) . "\n\n" .
                    "Your tokens are in the file below! 📄\n" .
-                   "Need more? Upload another JSON or use /help for guidance! 😊";
+                   "Need more? Upload another JSON! 😊";
 
         // Save results to a single JSON file
         $output_file = TEMP_DIR . "jwt_results_" . $chat_id . "_" . time() . ".json";
         file_put_contents($output_file, json_encode($results, JSON_PRETTY_PRINT));
 
-        // Send summary and file
-        editMessage($chat_id, $message_id, $summary);
+        // Send summary with Generate Again button
+        editMessage($chat_id, $message_id, $summary, [
+            'inline_keyboard' => [
+                [
+                    ['text' => 'Generate Again 🚀', 'callback_data' => 'generate_again'],
+                ],
+            ],
+        ]);
+
+        // Send output file
         $send_result = sendDocument($chat_id, $output_file, "🎮 Your JWT tokens are here, $username! Enjoy! 😄");
 
         // Clean up immediately
