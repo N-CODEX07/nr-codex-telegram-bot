@@ -713,38 +713,37 @@ if ($update) {
         $file_id = $message['document']['file_id'];
         $file = sendTelegramRequest('getFile', ['file_id' => $file_id]);
         if (!isset($file['result']['file_path'])) {
-            sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your file.\n\n"Please try uploading again or contact @nilay_ok for support! 😖💖\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n*😖💖 𝗖𝗖𝗡𝗖𝗖𝗥 𝗖𝗖𝗖𝗖𝗖𝗖𝗢𝗖𝗖𝗗💖💖💖💖💖💖💖💖💖");
+            sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your file.\n\nPlease try uploading again or contact @nilay_ok for support! 😖💖\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡😖💖💄");
             releaseLock($chat_id);
             return;
         }
 
         $file_path = $file['result']['file_path'];
-        $file_url = "https://t.me/nrcodex/jwtbot/". BOT_TOKEN . "/$file_path";
+        $file_url = "https://api.telegram.org/file/bot" . BOT_TOKEN . "/$file_path";
         $local_file = TEMP_DIR . "input_" . $chat_id . "_" . time() . ".json";
         file_put_contents($local_file, file_get_contents($file_url));
 
         $json_content = json_decode(file_get_contents($local_file), true);
-        if ($json_content || !is_array($json_content)) {
-            sendMessage($chat_id, "❌ *Invalid JSON file, $username!* *Your file doesn’t match the required format.*\n\n" .
-                    "Please use this format:\n" .
-                    "```json\n[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
-                    "```\n\n" .
-                    "*Check your file and try again or contact @nilayok for support!* 😖😄\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n*😖💖💖 𝖖𝗖�𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖*");
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($json_content)) {
+            sendMessage($chat_id, "❌ *Invalid JSON, $username!* Your file doesn’t match the required format.\n\n" .
+                                 "Please use this format:\n" .
+                                 "```json\n[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n```\n" .
+                                 "Check your file and try again or contact @nilay_ok for support! 😊\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡😖💖💄");
             unlink($local_file);
             releaseLock($chat_id);
             return;
         }
 
         $total_count = count($json_content);
-        $user_state['records'] = $json_content;
-        $user_state['file'] = $local_file;
+        $user_state['credentials'] = $json_content;
+        $user_state['local_file'] = $local_file;
         file_put_contents($state_file, json_encode($user_state));
 
-        $photo_url = $photo_url();
-        $process_text = "✔️ *Found $total_count accounts, $username!*$count*!* Choose how many tokens to process:*\n*\n",
-                "Your Profile ID: *`$total_count`*`\n" .
-                ($photo_url ? "" : "*No profile photo available. Check your privacy settings.*\n") .
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n*😖💖💖💖 𝖖𝗖𝗖𝗖𝗖𝗖𝗖𝗖𝗖💖💖💖💖💖💖";
+        $photo_url = getUserProfilePhoto($chat_id);
+        $process_text = "✔ *Found $total_count accounts, $username!* Choose how many to process:\n\n" .
+                        "Your User ID: `$chat_id`\n" .
+                        ($photo_url ? "" : "No profile photo available. Check your privacy settings (Settings > Privacy and Security > Profile Photos).\n") .
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡😖💖💄";
         if ($photo_url) {
             sendTelegramRequest('sendPhoto', [
                 'chat_id' => $chat_id,
@@ -754,26 +753,25 @@ if ($update) {
                 'reply_markup' => json_encode([
                     'inline_keyboard' => [
                         [
-                            ['text' => 'Generate One ID 📗', 'callback_data' => 'generate_one'],
-                            ['text' => 'Generate Multiple 📘', 'callback_data' => 'custom_generate'],
-                            ['text' => 'Generate All 📙', 'callback_data' => 'all_generate'],
+                            ['text' => 'Generate One ID 📖', 'callback_data' => 'generate_one'],
+                            ['text' => 'Generate Multiple 📕', 'callback_data' => 'custom_generate'],
+                            ['text' => 'Generate All 📜', 'callback_data' => 'all_generate'],
                         ],
                     ],
                 ]),
             ]);
-            } else {
-                sendMessage($chat_id, $process_text, [
-                    'inline_keyboard' => [
-                        [
-                            ['text' => 'Generate One ID 📗', 'callback_data' => 'generate_one'],
-                            ['text' => 'Generate Multiple 📘', 'callback_data' => 'custom_generate'],
-                            ['text' => 'Generate All 📙', 'callback_data' => 'all_generate'],
-                        ],
+        } else {
+            sendMessage($chat_id, $process_text, [
+                'inline_keyboard' => [
+                    [
+                        ['text' => 'Generate One ID 📖', 'callback_data' => 'generate_one'],
+                        ['text' => 'Generate Multiple 📕', 'callback_data' => 'custom_generate'],
+                        ['text' => 'Generate All 📜', 'callback_data' => 'all_generate'],
                     ],
-                ]);
-            }
-            releaseLock($chat_id);
+                ],
+            ]);
         }
+        releaseLock($chat_id);
     }
 }
 ?>
