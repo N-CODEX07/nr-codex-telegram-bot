@@ -96,14 +96,54 @@ function editMessage($chat_id, $message_id, $text, $reply_markup = null) {
     return sendTelegramRequest('editMessageText', $params);
 }
 
+// Fetch user profile photo
+function getUserProfilePhoto($chat_id) {
+    $params = [
+        'user_id' => $chat_id,
+    ];
+    $result = sendTelegramRequest('getUserProfilePhotos', $params);
+    if (isset($result['ok']) && $result['ok'] && !empty($result['result']['photos'])) {
+        $photo = $result['result']['photos'][0][0]; // Get smallest size photo
+        $file = sendTelegramRequest('getFile', ['file_id' => $photo['file_id']]);
+        if (isset($file['result']['file_path'])) {
+            return "https://api.telegram.org/file/bot" . BOT_TOKEN . "/" . $file['result']['file_path'];
+        }
+    }
+    return null;
+}
+
 // Check channel membership
 function isChannelMember($chat_id) {
     $params = [
         'chat_id' => CHANNEL_USERNAME,
         'user_id' => $chat_id,
     ];
-    $result = sendTelegramRequest('getChatMember', $params);
-    return isset($result['result']) && in_array($result['result']['status'], ['member', 'administrator', 'creator']);
+    for ($i = 0; $i < 3; $i++) {
+        $result = sendTelegramRequest('getChatMember', $params);
+        if (isset($result['ok']) && $result['ok']) {
+            return isset($result['result']) && in_array($result['result']['status'], ['member', 'administrator', 'creator']);
+        }
+        sleep(1);
+    }
+    file_put_contents(TEMP_DIR . "error_log_$chat_id.txt", "getChatMember (channel) failed: " . json_encode($result) . "\n", FILE_APPEND);
+    return false;
+}
+
+// Check group membership
+function isGroupMember($chat_id) {
+    $params = [
+        'chat_id' => GROUP_USERNAME,
+        'user_id' => $chat_id,
+    ];
+    for ($i = 0; $i < 3; $i++) {
+        $result = sendTelegramRequest('getChatMember', $params);
+        if (isset($result['ok']) && $result['ok']) {
+            return isset($result['result']) && in_array($result['result']['status'], ['member', 'administrator', 'creator']);
+        }
+        sleep(1);
+    }
+    file_put_contents(TEMP_DIR . "error_log_$chat_id.txt", "getChatMember (group) failed: " . json_encode($result) . "\n", FILE_APPEND);
+    return false;
 }
 
 // Fetch JWT token
@@ -337,12 +377,16 @@ if ($update) {
 
     // Handle /start command
     if ($message && isset($message['text']) && $message['text'] == '/start') {
+        $photo_url = getUserProfilePhoto($chat_id);
+        $photo_text = $photo_url ? "Your profile photo: [View]($photo_url)\n" : "No profile photo available. Check your privacy settings (Settings > Privacy and Security > Profile Photos).\n";
         $welcome_text = "👋 *Hey $username!* Welcome to *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗝𝗪𝗧* — generating JWT tokens for Free Fire guest IDs! 🚀\n\n" .
+                        "Your User ID: `$chat_id`\n" .
+                        $photo_text .
                         "I’m here to make your token generation fast and easy.\n" .
                         "📢 *Step 1:* Join our official Telegram channel for updates and support.\n" .
                         "👥 *Step 2:* Join our Telegram group for discussions and free likes.\n\n" .
                         "▶️ Click below to join & verify your membership!\n" .
-                        "*(You must be a member to access full features)*\n" .
+                        "*(You must be a member of both to access full features)*\n" .
                         "━━━━━━━━━━━━━━━━━━\n" .
                         "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡";
         $reply_markup = [
@@ -369,8 +413,12 @@ if ($update) {
         $data = $callback_query['data'];
 
         if ($data == 'check_membership') {
-            if (isChannelMember($chat_id)) {
+            if (isChannelMember($chat_id) && isGroupMember($chat_id)) {
+                $photo_url = getUserProfilePhoto($chat_id);
+                $photo_text = $photo_url ? "Your profile photo: [View]($photo_url)\n" : "No profile photo available. Check your privacy settings (Settings > Privacy and Security > Profile Photos).\n";
                 $info_text = "🎉 *You're officially in, $username!* Welcome to *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡ — Let’s Go!\n\n" .
+                             "Your User ID: `$chat_id`\n" .
+                             $photo_text .
                              "JWT Bot activated! Ready to fetch those tokens like a champ. 🚀\n\n" .
                              "📤 *Step 1:* Send me a `.json` file in this format:\n" .
                              "```json\n" .
@@ -398,8 +446,11 @@ if ($update) {
                 ];
                 editMessage($chat_id, $message_id, $info_text, $reply_markup);
             } else {
-                $error_text = "😕 *Oops, $username!* You haven’t joined yet.\n\n" .
-                              "Please join our channel and group to unlock the bot! 📢\n" .
+                $error_text = "😕 *Oops, $username!* You need to join both our channel and group:\n" .
+                              "- Channel: @" . ltrim(CHANNEL_USERNAME, '@') . "\n" .
+                              "- Group: @" . ltrim(GROUP_USERNAME, '@') . "\n\n" .
+                              "Also, ensure your group membership is visible in Telegram Settings > Privacy and Security > Groups & Channels.\n" .
+                              "If the issue persists, contact @nilay_ok for support.\n" .
                               "━━━━━━━━━━━━━━━━━━\n" .
                               "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡";
                 editMessage($chat_id, $message_id, $error_text, [
@@ -436,7 +487,11 @@ if ($update) {
             $local_file = $user_state['local_file'];
             processCredentials($chat_id, $message_id, $username, $credentials, count($credentials), $local_file);
         } elseif ($data == 'generate_again') {
+            $photo_url = getUserProfilePhoto($chat_id);
+            $photo_text = $photo_url ? "Your profile photo: [View]($photo_url)\n" : "No profile photo available. Check your privacy settings (Settings > Privacy and Security > Profile Photos).\n";
             $info_text = "🚀 *Ready to generate more tokens, $username?*\n\n" .
+                         "Your User ID: `$chat_id`\n" .
+                         $photo_text .
                          "Send me another JSON file or generate a single token:\n" .
                          "```json\n" .
                          "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
@@ -553,8 +608,15 @@ if ($update) {
 
     // Handle JSON file upload
     if ($message && isset($message['document']) && $message['document']['mime_type'] == 'application/json') {
-        if (!isChannelMember($chat_id)) {
-            sendMessage($chat_id, "😕 *Sorry, $username!* You need to join first.\n\n" .
+        if (!isChannelMember($chat_id) || !isGroupMember($chat_id)) {
+            $photo_url = getUserProfilePhoto($chat_id);
+            $photo_text = $photo_url ? "Your profile photo: [View]($photo_url)\n" : "No profile photo available. Check your privacy settings (Settings > Privacy and Security > Profile Photos).\n";
+            sendMessage($chat_id, "😕 *Sorry, $username!* You need to join both our channel and group:\n" .
+                                 "- Channel: @" . ltrim(CHANNEL_USERNAME, '@') . "\n" .
+                                 "- Group: @" . ltrim(GROUP_USERNAME, '@') . "\n\n" .
+                                 "Your User ID: `$chat_id`\n" .
+                                 $photo_text .
+                                 "Also, ensure your group membership is visible in Telegram Settings > Privacy and Security > Groups & Channels.\n" .
                                  "Click below to join and unlock the bot! 👇\n" .
                                  "━━━━━━━━━━━━━━━━━━\n" .
                                  "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡", [
@@ -587,7 +649,7 @@ if ($update) {
             sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your file.\n\n" .
                                  "Please try uploading it again or contact @nilay_ok for support! 😔\n" .
                                  "━━━━━━━━━━━━━━━━━━\n" .
-                                 "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡");
+                                 "≫ *𝗡𝗥 �_C𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡");
             releaseLock($chat_id);
             exit;
         }
@@ -607,7 +669,7 @@ if ($update) {
                                  "```\n\n" .
                                  "Check your file and try again or contact @nilay_ok for support! 😊\n" .
                                  "━━━━━━━━━━━━━━━━━━\n" .
-                                 "≫ *�_N𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡");
+                                 "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡");
             unlink($local_file);
             releaseLock($chat_id);
             exit;
@@ -618,9 +680,13 @@ if ($update) {
         $user_state['local_file'] = $local_file;
         file_put_contents($state_file, json_encode($user_state));
 
-        sendMessage($chat_id, "✅ *Found $total_count accounts, $username!* Choose how many to process:\n" .
+        $photo_url = getUserProfilePhoto($chat_id);
+        $photo_text = $photo_url ? "Your profile photo: [View]($photo_url)\n" : "No profile photo available. Check your privacy settings (Settings > Privacy and Security > Profile Photos).\n";
+        sendMessage($chat_id, "✅ *Found $total_count accounts, $username!* Choose how many to process:\n\n" .
+                             "Your User ID: `$chat_id`\n" .
+                             $photo_text .
                              "━━━━━━━━━━━━━━━━━━\n" .
-                             "≫ *�_N𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡", [
+                             "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡", [
             'inline_keyboard' => [
                 [
                     ['text' => 'GENERATE ONE ID', 'callback_data' => 'generate_one'],
