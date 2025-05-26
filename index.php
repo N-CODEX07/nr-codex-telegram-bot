@@ -137,7 +137,7 @@ function processCredential($credential, &$results, &$failed_count, &$invalid_cou
         if ($result['http_code'] == 200) {
             $data = json_decode($result['response'], true);
             if (isset($data['token'])) {
-                $results[] = ['token' => $data['token']];
+                $results[] = ['uid' => $uid, 'token' => $data['token']]; // Include UID in results
                 $success = true;
             } else {
                 $invalid_count++;
@@ -231,7 +231,7 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
             if ($http_code == 200) {
                 $data = json_decode($result, true);
                 if (isset($data['token'])) {
-                    $results[] = ['token' => $data['token']];
+                    $results[] = ['uid' => $credential['uid'] ?? '', 'token' => $data['token']];
                 } else {
                     $invalid_count++;
                     $failed_credentials[] = ['uid' => $credential['uid'] ?? '', 'password' => $credential['password'] ?? '', 'reason' => 'Invalid: No token returned'];
@@ -393,23 +393,18 @@ if ($update) {
             if (isChannelMember($chat_id)) {
                 $info_text = "🎉 *$username*! You're officially in *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡ — Let’s Go!\n\n" .
                              "JWT Bot activated! Ready to fetch those tokens like a champ.\n\n" .
-                             "*Step 1:* Send me a .json file and file format like:\n\n" .
+                             "*Step 1:* Send me a *token.json* file with your Free Fire guest ID credentials in this format:\n\n" .
                              "```json\n" .
                              "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
                              "```\n\n" .
                              "Sit back — I’ll handle the rest:\n" .
                              "🔁 Retries (up to 10x)\n" .
-                             "📦 Returns one failed file with all your Token\n" .
+                             "📦 Returns one failed file with all your Tokens\n" .
                              "━━━━━━━━━━━\n" .
-                             "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡";
+                             "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕�_O𝗧𝗦* ⚡";
                 $reply_markup = [
                     'inline_keyboard' => [
                         [
-                            ['text' => 'GENERATE ONE ID', 'callback_data' => 'generate_one_id'],
-                            ['text' => 'GENERATE CUSTOM', 'callback_data' => 'custom_generate'],
-                        ],
-                        [
-                            ['text' => 'GENERATE ALL IDS', 'callback_data' => 'all_generate'],
                             ['text' => 'GET API', 'url' => 'https://t.me/nilay_ok'],
                         ],
                     ],
@@ -429,10 +424,6 @@ if ($update) {
                 ];
                 editMessage($chat_id, $message_id, $error_text, $reply_markup);
             }
-        } elseif ($data == 'generate_one_id') {
-            $user_state['awaiting_single_uid'] = true;
-            file_put_contents($state_file, json_encode($user_state));
-            sendMessage($chat_id, "🔢 *Please provide the Guest ID, $username!*");
         } elseif ($data == 'custom_generate') {
             $user_state['awaiting_custom_count'] = true;
             file_put_contents($state_file, json_encode($user_state));
@@ -440,7 +431,7 @@ if ($update) {
                                  "Please enter a number (e.g., 1, 5, 10).");
         } elseif ($data == 'all_generate') {
             if (!isset($user_state['credentials'])) {
-                sendMessage($chat_id, "❌ *No JSON file found, $username!* Please upload a JSON file first.");
+                sendMessage($chat_id, "❌ *No token.json file found, $username!* Please upload a token.json file first.");
                 exit;
             }
             $credentials = $user_state['credentials'];
@@ -448,7 +439,7 @@ if ($update) {
             processCredentials($chat_id, $message_id, $username, $credentials, count($credentials), $local_file);
         } elseif ($data == 'generate_again') {
             $info_text = "🚀 *Ready to generate more tokens, $username?*\n\n" .
-                         "Send me another JSON file with your Free Fire guest ID credentials in this format:\n\n" .
+                         "Send me another *token.json* file with your Free Fire guest ID credentials in this format:\n\n" .
                          "```json\n" .
                          "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
                          "```\n\n" .
@@ -467,7 +458,7 @@ if ($update) {
             exit;
         }
         if (!isset($user_state['credentials'])) {
-            sendMessage($chat_id, "❌ *No JSON file found, $username!* Please upload a JSON file first.");
+            sendMessage($chat_id, "❌ *No token.json file found, $username!* Please upload a token.json file first.");
             $user_state['awaiting_custom_count'] = false;
             file_put_contents($state_file, json_encode($user_state));
             exit;
@@ -484,60 +475,8 @@ if ($update) {
         processCredentials($chat_id, $message['message_id'], $username, array_slice($credentials, 0, $count), $count, $local_file);
     }
 
-    // Handle text input for single ID
-    if ($message && isset($message['text']) && isset($user_state['awaiting_single_uid']) && $user_state['awaiting_single_uid']) {
-        $user_state['single_uid'] = $message['text'];
-        $user_state['awaiting_single_uid'] = false;
-        $user_state['awaiting_single_password'] = true;
-        file_put_contents($state_file, json_encode($user_state));
-        sendMessage($chat_id, "🔑 *Now provide the password for Guest ID {$user_state['single_uid']}, $username!*");
-    }
-
-    // Handle password input for single ID
-    if ($message && isset($message['text']) && isset($user_state['awaiting_single_password']) && $user_state['awaiting_single_password']) {
-        $uid = $user_state['single_uid'];
-        $password = $message['text'];
-        $user_state['awaiting_single_password'] = false;
-        file_put_contents($state_file, json_encode($user_state));
-
-        // Process single credential
-        $results = [];
-        $failed_count = 0;
-        $invalid_count = 0;
-        $failed_credentials = [];
-        $credential = ['uid' => $uid, 'password' => $password];
-        processCredential($credential, $results, $failed_count, $invalid_count, $failed_credentials);
-
-        if (!empty($results)) {
-            $token = $results[0]['token'];
-            $token_message = "🎉 *Success, $username!* Here’s your JWT token for Guest ID `$uid`:\n\n" .
-                             "```\n$token\n```\n\n" .
-                             "Copy the token above and use it! Want another? Click below! 😊";
-            $reply_markup = [
-                'inline_keyboard' => [
-                    [
-                        ['text' => 'Generate Another 🚀', 'callback_data' => 'generate_one_id'],
-                    ],
-                ],
-            ];
-            sendMessage($chat_id, $token_message, $reply_markup);
-        } else {
-            $reason = $failed_credentials[0]['reason'] ?? 'Unknown error';
-            $error_message = "❌ *Oops, $username!* Couldn’t generate token for Guest ID `$uid`.\n\n" .
-                             "Reason: $reason\n\nTry again or contact support! 😔";
-            $reply_markup = [
-                'inline_keyboard' => [
-                    [
-                        ['text' => 'Try Again 🚀', 'callback_data' => 'generate_one_id'],
-                    ],
-                ],
-            ];
-            sendMessage($chat_id, $error_message, $reply_markup);
-        }
-    }
-
     // Handle JSON file upload
-    if ($message && isset($message['document']) && $message['document']['mime_type'] == 'application/json') {
+    if ($message && isset($message['document']) && $message['document']['mime_type'] == 'application/json' && $message['document']['file_name'] == 'token.json') {
         if (!isChannelMember($chat_id)) {
             sendMessage($chat_id, "😕 *Sorry, $username!* You need to join first.\n\n" .
                                  "Click below to join and unlock the bot! 👇", [
@@ -561,7 +500,7 @@ if ($update) {
         $file_id = $message['document']['file_id'];
         $file = sendTelegramRequest('getFile', ['file_id' => $file_id]);
         if (!isset($file['result']['file_path'])) {
-            sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your file.\n\n" .
+            sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your token.json file.\n\n" .
                                  "Please try uploading it again. If the issue continues, contact support! 😔");
             releaseLock($chat_id);
             exit;
@@ -576,7 +515,7 @@ if ($update) {
         $json_content = file_get_contents($local_file);
         $credentials = json_decode($json_content, true);
         if (json_last_error() !== JSON_ERROR_NONE || !is_array($credentials)) {
-            sendMessage($chat_id, "❌ *Invalid JSON, $username!* Your file doesn’t match the required format.\n\n" .
+            sendMessage($chat_id, "❌ *Invalid token.json, $username!* Your file doesn’t match the required format.\n\n" .
                                  "Please use this format:\n" .
                                  "```json\n" .
                                  "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
@@ -593,13 +532,10 @@ if ($update) {
         file_put_contents($state_file, json_encode($user_state));
 
         // Send confirmation message with options
-        sendMessage($chat_id, "✅ *Found $total_count guest IDs, $username!* Choose an option:", [
+        sendMessage($chat_id, "✅ *Found $total_count guest IDs in token.json, $username!* Choose an option:", [
             'inline_keyboard' => [
                 [
-                    ['text' => 'GENERATE ONE ID', 'callback_data' => 'generate_one_id'],
                     ['text' => 'GENERATE CUSTOM', 'callback_data' => 'custom_generate'],
-                ],
-                [
                     ['text' => 'GENERATE ALL IDS', 'callback_data' => 'all_generate'],
                 ],
             ],
