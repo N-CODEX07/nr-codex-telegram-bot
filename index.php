@@ -1,245 +1,31 @@
 <?php
 
-// Constants
-define('BOT_TOKEN', getenv('BOT_TOKEN') ?: '7336854248:AAFlHQIDHfg3keMtDhwNpxqQ_fBzOupbZGc'); // Replace fallback in production
+// Bot configuration
+define('BOT_TOKEN', '7336854248:AAFlHQIDHfg3keMtDhwNpxqQ_fBzOupbZGc');
 define('CHANNEL_USERNAME', '@nr_codex');
-define('API_BASE_URL', 'https://akiru-jwt-10.vercel.app/token');
+define('GROUP_USERNAME', '@nr_codex_likegroup');
+define('BOT_NAME', 'NR CODEX JWT');
 define('INSTAGRAM_URL', 'https://www.instagram.com/nr_codex?igsh=MjZlZWo2cGd3bDVk');
 define('YOUTUBE_URL', 'https://youtube.com/@nr_codex06?si=5pbP9qsDLfT4uTgf');
+define('API_BASE_URLS', [
+    'VERCEL_URL/token?uid={Uid}&password={Password}', // Replace VERCEL_URL with actual API endpoint
+]);
 define('MAX_RETRIES', 10);
 define('CONCURRENT_REQUESTS', 55);
-define('TEMP_DIR', '/tmp/jwt_bot/');
+define('TEMP_DIR', sys_get_temp_dir() . '/jwt_bot/');
 
-// Ensure temporary directory exists with secure permissions
-if (!is_dir(TEMP_DIR)) {
-    mkdir(TEMP_DIR, 0700, true);
+// Ensure temp directory exists
+if (!file_exists(TEMP_DIR)) {
+    mkdir(TEMP_DIR, 0777, true);
 }
 
-// Clean up old temporary files
-$files = glob(TEMP_DIR . '{input_*,jwt_results_*,failed_credentials_*,error_log_*}', GLOB_BRACE);
-foreach ($files as $file) {
-    if (is_file($file)) {
-        unlink($file);
-    }
-}
-
-// Telegram API request function
-function sendTelegramRequest($method, $params = []) {
-    $url = "https://api.telegram.org/bot" . BOT_TOKEN . "/$method";
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($params));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    $response = curl_exec($ch);
-    $error = curl_error($ch);
-    curl_close($ch);
-    if ($error) {
-        file_put_contents(TEMP_DIR . "/error_log.txt", "Telegram API error ($method): $error\n", FILE_APPEND);
-        return false;
-    }
-    return json_decode($response, true);
-}
-
-// Check channel membership
-function isChannelMember($chat_id) {
-    $attempt = 0;
-    while ($attempt < 3) {
-        $response = sendTelegramRequest('getChatMember', [
-            'chat_id' => CHANNEL_USERNAME,
-            'user_id' => $chat_id
-        ]);
-        if ($response && $response['ok'] && in_array($response['result']['status'], ['member', 'administrator', 'creator'])) {
-            return true;
-        }
-        $attempt++;
-        sleep(pow(2, $attempt)); // Exponential backoff
-    }
-    file_put_contents(TEMP_DIR . "/error_log_$chat_id.txt", "Membership check failed for $chat_id\n", FILE_APPEND);
-    return false;
-}
-
-// Fetch JWT token from external API
-function fetchJwtToken($uid, $password, $chat_id) {
-    $url = API_BASE_URL . "?uid=" . urlencode($uid) . "&password=" . urlencode($password);
-    $attempt = 0;
-    
-    while ($attempt < MAX_RETRIES) {
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        if ($error) {
-            file_put_contents(TEMP_DIR . "/error_log_$chat_id.txt", "cURL error for UID $uid: $error\n", FILE_APPEND);
-            $attempt++;
-            sleep(pow(2, $attempt));
-            continue;
-        }
-
-        if ($httpCode == 429) {
-            $attempt++;
-            sleep(pow(2, $attempt));
-            continue;
-        }
-
-        $data = json_decode($response, true);
-        if ($data && isset($data['token'])) {
-            return ['success' => true, 'token' => $data['token']];
-        }
-
-        return ['success' => false, 'reason' => 'Invalid response or no token'];
-    }
-
-    return ['success' => false, 'reason' => 'Max retries reached'];
-}
-
-// Process bulk credentials
-function processBulkCredentials($credentials, $count, $chat_id, $message_id) {
-    $total_count = min($count, count($credentials));
-    $successful = [];
-    $failed = [];
-    $invalid = [];
-    $start_time = microtime(true);
-
-    $mh = curl_multi_init();
-    $handles = [];
-    $batch = array_slice($credentials, 0, $total_count);
-    $total_processed = 0;
-
-    for ($i = 0; $i < $total_count; $i += CONCURRENT_REQUESTS) {
-        $chunk = array_slice($batch, $i, CONCURRENT_REQUESTS);
-        foreach ($chunk as $cred) {
-            if (!isset($cred['uid']) || !isset($cred['password']) || empty($cred['uid']) || empty($cred['password'])) {
-                $invalid[] = $cred;
-                $total_processed++;
-                continue;
-            }
-            $ch = curl_init(API_BASE_URL . "?uid=" . urlencode($cred['uid']) . "&password=" . urlencode($cred['password']));
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            curl_multi_add_handle($mh, $ch);
-            $handles[] = ['ch' => $ch, 'uid' => $cred['uid'], 'password' => $cred['password']];
-        }
-
-        do {
-            curl_multi_exec($mh, $running);
-            curl_multi_select($mh);
-        } while ($running > 0);
-
-        foreach ($handles as $handle) {
-            $response = curl_multi_getcontent($handle['ch']);
-            $httpCode = curl_getinfo($handle['ch'], CURLINFO_HTTP_CODE);
-            $data = json_decode($response, true);
-            if ($httpCode == 200 && $data && isset($data['token'])) {
-                $successful[] = ['uid' => $handle['uid'], 'token' => $data['token']];
-            } else {
-                $failed[] = ['uid' => $handle['uid'], 'password' => $handle['password'], 'reason' => $data['error'] ?? 'Unknown error'];
-            }
-            curl_multi_remove_handle($mh, $handle['ch']);
-            curl_close($handle['ch']);
-            $total_processed++;
-        }
-
-        $handles = [];
-        $progress = (int)(($total_processed / $total_count) * 100);
-        $bar = str_repeat('▰', $progress / 10) . str_repeat('▱', 10 - $progress / 10);
-        $messages = [
-            '🔥 Blazing through, hang tight!',
-            '🚀 Speeding up, almost there!',
-            '⚡ Fetching tokens like a champ!'
-        ];
-        sendTelegramRequest('editMessageText', [
-            'chat_id' => $chat_id,
-            'message_id' => $message_id,
-            'text' => "Processing: $bar $progress%\n" . $messages[array_rand($messages)],
-            'parse_mode' => 'Markdown'
-        ]);
-    }
-
-    curl_multi_close($mh);
-
-    // Save results
-    $json_file = TEMP_DIR . "jwt_results_$chat_id.json";
-    $failed_file = TEMP_DIR . "failed_credentials_$chat_id.txt";
-    file_put_contents($json_file, json_encode($successful, JSON_PRETTY_PRINT));
-    $failed_content = "";
-    foreach ($failed as $cred) {
-        $failed_content .= "UID: {$cred['uid']}, Password: {$cred['password']}, Reason: {$cred['reason']}\n";
-    }
-    foreach ($invalid as $cred) {
-        $failed_content .= "UID: " . ($cred['uid'] ?? 'N/A') . ", Password: " . ($cred['password'] ?? 'N/A') . ", Reason: Invalid format\n";
-    }
-    file_put_contents($failed_file, $failed_content);
-
-    $processing_time = round((microtime(true) - $start_time) / 60, 2);
-    $text = "🎉 *Done!* Your JWT tokens are ready! 🚀\n" .
-            "📑 *JWT Token Summary*\n" .
-            "🔢 Total Accounts: $total_count\n" .
-            "✅ Successful: " . count($successful) . "\n" .
-            "❌ Failed: " . count($failed) . "\n" .
-            "⚠️ Invalid: " . count($invalid) . "\n" .
-            "⏱️ Time Taken: $processing_time min\n" .
-            "🌐 APIs Used: 1\n" .
-            "━━━━━━━━━━━━━━━━━━\n" .
-            "≫ *NR CODEX BOTS* ⚡\n" .
-            "📄 Your tokens are ready in the file below.\n" .
-            "Want more tokens? Just upload another JSON file! 😊";
-    sendTelegramRequest('sendMessage', [
-        'chat_id' => $chat_id,
-        'text' => $text,
-        'parse_mode' => 'Markdown',
-        'reply_markup' => json_encode([
-            'inline_keyboard' => [[['text' => 'Generate Again 🚀', 'callback_data' => 'generate_again']]]
-        ])
-    ]);
-    sendTelegramRequest('sendDocument', [
-        'chat_id' => $chat_id,
-        'document' => new CURLFile($json_file),
-        'caption' => 'Successful JWT tokens'
-    ]);
-    if (file_exists($failed_file) && filesize($failed_file) > 0) {
-        sendTelegramRequest('sendDocument', [
-            'chat_id' => $chat_id,
-            'document' => new CURLFile($failed_file),
-            'caption' => 'Failed or invalid credentials'
-        ]);
-    }
-
-    unlink($json_file);
-    if (file_exists($failed_file)) {
-        unlink($failed_file);
-    }
-}
-
-// State management
-function getState($chat_id) {
-    $state_file = TEMP_DIR . "state_$chat_id.json";
-    return file_exists($state_file) ? json_decode(file_get_contents($state_file), true) : [];
-}
-
-function saveState($chat_id, $state) {
-    $state_file = TEMP_DIR . "state_$chat_id.json";
-    file_put_contents($state_file, json_encode($state));
-}
-
-function clearState($chat_id) {
-    $state_file = TEMP_DIR . "state_$chat_id.json";
-    if (file_exists($state_file)) {
-        unlink($state_file);
-    }
-}
-
-// Lock management
+// Simple lock file to prevent concurrent processing per user
 function acquireLock($chat_id) {
     $lock_file = TEMP_DIR . "lock_$chat_id";
-    if (file_exists($lock_file)) {
-        return false;
+    if (file_exists($lock_file) && (time() - filemtime($lock_file)) < 300) {
+        return false; // Lock exists and is recent (5 minutes)
     }
-    file_put_contents($lock_file, '');
+    file_put_contents($lock_file, time());
     return true;
 }
 
@@ -250,323 +36,576 @@ function releaseLock($chat_id) {
     }
 }
 
-// Main bot logic
-$update = json_decode(file_get_contents('php://input'), true);
-$chat_id = $update['message']['chat']['id'] ?? $update['callback_query']['from']['id'] ?? 0;
-$message = $update['message'] ?? null;
-$callback_data = $update['callback_query']['data'] ?? null;
-$username = $update['message']['chat']['username'] ?? $update['callback_query']['from']['username'] ?? 'User';
-$message_id = $update['message']['message_id'] ?? $update['callback_query']['message']['message_id'] ?? 0;
-
-if (!$chat_id) {
-    exit;
+// Telegram API request function
+function sendTelegramRequest($method, $params = []) {
+    $url = "https://api.telegram.org/bot" . BOT_TOKEN . "/$method";
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($params));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $result = curl_exec($ch);
+    curl_close($ch);
+    return json_decode($result, true);
 }
 
-// Get user profile photo
-$photo_response = sendTelegramRequest('getUserProfilePhotos', ['user_id' => $chat_id]);
-$photo_url = 'No profile photo available...';
-if ($photo_response && $photo_response['ok'] && !empty($photo_response['result']['photos'])) {
-    $file_id = $photo_response['result']['photos'][0][0]['file_id'];
-    $file_response = sendTelegramRequest('getFile', ['file_id' => $file_id]);
-    if ($file_response && $file_response['ok']) {
-        $photo_url = "https://api.telegram.org/file/bot" . BOT_TOKEN . "/" . $file_response['result']['file_path'];
-        $photo_url = "[View]($photo_url)";
-    }
-}
-
-// Handle commands and callbacks
-if ($message && isset($message['text']) && $message['text'] === '/start') {
-    $text = "👋 *Hey $username (ID: $chat_id)!* Welcome to *NR CODEX JWT* — generating JWT tokens for Free Fire guest IDs! 🚀\n" .
-            "Your profile photo: $photo_url\n" .
-            "I’m here to make your token generation fast and easy.\n" .
-            "📢 *Step 1:* Join our official Telegram channel for updates and support.\n" .
-            "▶️ Click below to join & verify your membership!\n" .
-            "*(You must be a member of the channel to access full features)*\n" .
-            "━━━━━━━━━━━━━━━━━━\n" .
-            "≫ *NR CODEX BOTS* ⚡";
-    sendTelegramRequest('sendMessage', [
+// Send message
+function sendMessage($chat_id, $text, $reply_markup = null) {
+    $params = [
         'chat_id' => $chat_id,
         'text' => $text,
         'parse_mode' => 'Markdown',
-        'reply_markup' => json_encode([
-            'inline_keyboard' => [
-                [
-                    ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/nr_codex'],
-                    ['text' => 'INSTAGRAM 🔥', 'url' => INSTAGRAM_URL],
-                    ['text' => 'YOUTUBE ⚡', 'url' => YOUTUBE_URL],
-                    ['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership']
-                ]
-            ]
-        ])
-    ]);
-} elseif ($callback_data === 'check_membership') {
-    if (!isChannelMember($chat_id)) {
-        $text = "😕 *Oops, $username!* You need to join our channel:\n" .
-                "- Channel: " . CHANNEL_USERNAME . "\n" .
-                "Also, ensure your channel membership is visible in Telegram Settings > Privacy and Security > Groups & Channels > Who can see your groups: 'Everybody'.\n" .
-                "If the issue persists, contact @nilay_ok for support.\n" .
-                "━━━━━━━━━━━━━━━━━━\n" .
-                "≫ *NR CODEX BOTS* ⚡";
-        sendTelegramRequest('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => $text,
-            'parse_mode' => 'Markdown',
-            'reply_markup' => json_encode([
-                'inline_keyboard' => [
-                    [
-                        ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/nr_codex'],
-                        ['text' => 'INSTAGRAM 🔥', 'url' => INSTAGRAM_URL],
-                        ['text' => 'YOUTUBE ⚡', 'url' => YOUTUBE_URL],
-                        ['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership']
-                    ]
-                ]
-            ])
-        ]);
-    } else {
-        $text = "🎉 *You're officially in, $username!* Welcome to *NR CODEX BOTS* ⚡ — Let’s Go!\n" .
-                "Your User ID: `$chat_id`\n" .
-                "Your profile photo: $photo_url\n" .
-                "JWT Bot activated! Ready to fetch those tokens like a champ. 🚀\n" .
-                "📤 *Step 1:* Send me a `.json` file in this format:\n" .
-                "```json\n[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
-                "```\n" .
-                "Or choose to generate a single token manually. 🔄 I’ll handle:\n" .
-                "- 🔁 Retries (up to 10x)\n- 📦 One file with all your tokens\n- 📜 Failed credentials in a separate file\n" .
-                "━━━━━━━━━━━━━━━━━━\n" .
-                "≫ *NR CODEX BOTS* ⚡\n" .
-                "For API access, contact @nilay_ok";
-        sendTelegramRequest('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => $text,
-            'parse_mode' => 'Markdown',
-            'reply_markup' => json_encode([
-                'inline_keyboard' => [
-                    [
-                        ['text' => 'GENERATE ONE ID', 'callback_data' => 'generate_one'],
-                        ['text' => 'GENERATE CUSTOM', 'callback_data' => 'generate_custom'],
-                        ['text' => 'GENERATE ALL IDS', 'callback_data' => 'generate_all'],
-                        ['text' => 'GET API', 'url' => 'https://t.me/nilay_ok']
-                    ]
-                ]
-            ])
-        ]);
+    ];
+    if ($reply_markup) {
+        $params['reply_markup'] = json_encode($reply_markup);
     }
-} elseif ($callback_data === 'generate_one') {
-    if (!isChannelMember($chat_id)) {
-        sendTelegramRequest('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => "😕 Please join " . CHANNEL_USERNAME . " to use this feature!",
-            'parse_mode' => 'Markdown',
-            'reply_markup' => json_encode([
-                'inline_keyboard' => [[['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership']]]
-            ])
-        ]);
-        exit;
-    }
-    saveState($chat_id, ['state' => 'awaiting_uid']);
-    sendTelegramRequest('sendMessage', [
+    return sendTelegramRequest('sendMessage', $params);
+}
+
+// Send document
+function sendDocument($chat_id, $file_path, $caption = '') {
+    $url = "https://api.telegram.org/bot" . BOT_TOKEN . "/sendDocument";
+    $post_fields = [
         'chat_id' => $chat_id,
-        'text' => "🔢 Please send me the Guest ID (UID), $username!",
-        'parse_mode' => 'Markdown'
-    ]);
-} elseif ($message && isset($message['text']) && ($state = getState($chat_id))) {
-    if ($state['state'] === 'awaiting_uid') {
-        $uid = trim($message['text']);
-        if (empty($uid)) {
-            sendTelegramRequest('sendMessage', ['chat_id' => $chat_id, 'text' => "❌ UID cannot be empty! Please send a valid UID."]);
-            exit;
-        }
-        saveState($chat_id, ['state' => 'awaiting_password', 'uid' => $uid]);
-        sendTelegramRequest('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => "🔑 Now send me the password for UID $uid, $username!",
-            'parse_mode' => 'Markdown'
-        ]);
-    } elseif ($state['state'] === 'awaiting_password') {
-        $password = trim($message['text']);
-        if (empty($password)) {
-            sendTelegramRequest('sendMessage', ['chat_id' => $chat_id, 'text' => "❌ Password cannot be empty! Please send a valid password."]);
-            exit;
-        }
-        if (!acquireLock($chat_id)) {
-            sendTelegramRequest('sendMessage', ['chat_id' => $chat_id, 'text' => "⏳ Please wait, another process is running!"]);
-            exit;
-        }
-        $result = fetchJwtToken($state['uid'], $password, $chat_id);
-        clearState($chat_id);
-        releaseLock($chat_id);
-        if ($result['success']) {
-            $text = "🎉 *Success, $username!* Here’s your JWT token for UID {$state['uid']}:\n```json\n{$result['token']}\n```\n" .
-                    "Copy the token above and use it! 😄\n" .
-                    "━━━━━━━━━━━━━━━━━━\n" .
-                    "≫ *NR CODEX BOTS* ⚡\n" .
-                    "Want another? Click below!";
-            sendTelegramRequest('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $text,
-                'parse_mode' => 'Markdown',
-                'reply_markup' => json_encode([
-                    'inline_keyboard' => [[['text' => 'Generate Another 🚀', 'callback_data' => 'generate_one']]]
-                ])
-            ]);
+        'caption' => $caption,
+        'document' => new CURLFile($file_path),
+    ];
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $post_fields);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $result = curl_exec($ch);
+    curl_close($ch);
+    return json_decode($result, true);
+}
+
+// Edit message
+function editMessage($chat_id, $message_id, $text, $reply_markup = null) {
+    $params = [
+        'chat_id' => $chat_id,
+        'message_id' => $message_id,
+        'text' => $text,
+        'parse_mode' => 'Markdown',
+    ];
+    if ($reply_markup) {
+        $params['reply_markup'] = json_encode($reply_markup);
+    }
+    return sendTelegramRequest('editMessageText', $params);
+}
+
+// Check if user is a member of the channel
+function isChannelMember($chat_id) {
+    $params = [
+        'chat_id' => CHANNEL_USERNAME,
+        'user_id' => $chat_id,
+    ];
+    $result = sendTelegramRequest('getChatMember', $params);
+    return isset($result['result']) && in_array($result['result']['status'], ['member', 'administrator', 'creator']);
+}
+
+// Make API request to fetch JWT token
+function fetchJwtToken($uid, $password, $api_url) {
+    $url = str_replace(['{Uid}', '{Password}'], [urlencode($uid), urlencode($password)], $api_url);
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return ['response' => $response, 'http_code' => $http_code];
+}
+
+// Process credentials with retries
+function processCredential($credential, &$results, &$failed_count, &$invalid_count, &$failed_credentials) {
+    $uid = $credential['uid'] ?? '';
+    $password = $credential['password'] ?? '';
+    if (empty($uid) || empty($password)) {
+        $invalid_count++;
+        $failed_credentials[] = ['uid' => $uid, 'password' => $password, 'reason' => 'Invalid: Missing UID or password'];
+        return;
+    }
+
+    $attempts = 0;
+    $success = false;
+    while ($attempts < MAX_RETRIES && !$success) {
+        $api_url = API_BASE_URLS[0]; // Use the single API endpoint
+        $result = fetchJwtToken($uid, $password, $api_url);
+        $attempts++;
+
+        if ($result['http_code'] == 200) {
+            $data = json_decode($result['response'], true);
+            if (isset($data['token'])) {
+                $results[] = ['token' => $data['token']];
+                $success = true;
+            } else {
+                $invalid_count++;
+                $failed_credentials[] = ['uid' => $uid, 'password' => $password, 'reason' => 'Invalid: No token returned'];
+                break;
+            }
         } else {
-            $text = "❌ *Failed to generate token, $username!* Reason: {$result['reason']}\n" .
-                    "Please try again or contact @nilay_ok for support.\n" .
-                    "━━━━━━━━━━━━━━━━━━\n" .
-                    "≫ *NR CODEX BOTS* ⚡";
-            sendTelegramRequest('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => $text,
-                'parse_mode' => 'Markdown',
-                'reply_markup' => json_encode([
-                    'inline_keyboard' => [[['text' => 'Try Again 🚀', 'callback_data' => 'generate_one']]]
-                ])
-            ]);
+            if ($attempts == MAX_RETRIES) {
+                $failed_count++;
+                $failed_credentials[] = ['uid' => $uid, 'password' => $password, 'reason' => 'Failed: Max retries reached'];
+            }
         }
-    } elseif ($state['state'] === 'awaiting_custom_count') {
-        $count = (int)trim($message['text']);
-        if ($count <= 0) {
-            sendTelegramRequest('sendMessage', ['chat_id' => $chat_id, 'text' => "❌ Please enter a valid number of accounts!"]);
-            exit;
-        }
-        $input_file = TEMP_DIR . "input_$chat_id.json";
-        $credentials = json_decode(file_get_contents($input_file), true);
-        if ($count > count($credentials)) {
-            sendTelegramRequest('sendMessage', ['chat_id' => $chat_id, 'text' => "❌ Cannot process more accounts than available (" . count($credentials) . ")!"]);
-            exit;
-        }
-        if (!acquireLock($chat_id)) {
-            sendTelegramRequest('sendMessage', ['chat_id' => $chat_id, 'text' => "⏳ Please wait, another process is running!"]);
-            exit;
-        }
-        clearState($chat_id);
-        $response = sendTelegramRequest('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => "Processing: ▱▱▱▱▱▱▱▱▱▱ 0%\n🔥 Starting token generation...",
-            'parse_mode' => 'Markdown'
-        ]);
-        $progress_message_id = $response['result']['message_id'];
-        processBulkCredentials($credentials, $count, $chat_id, $progress_message_id);
-        releaseLock($chat_id);
-        unlink($input_file);
     }
-} elseif ($message && isset($message['document']) && isChannelMember($chat_id)) {
-    $file_id = $message['document']['file_id'];
-    $file_response = sendTelegramRequest('getFile', ['file_id' => $file_id]);
-    if ($file_response && $file_response['ok']) {
-        $file_path = $file_response['result']['file_path'];
-        $file_url = "https://api.telegram.org/file/bot" . BOT_TOKEN . "/" . $file_path;
-        $file_content = file_get_contents($file_url);
-        $credentials = json_decode($file_content, true);
-        if (!$credentials || !is_array($credentials)) {
-            sendTelegramRequest('sendMessage', [
-                'chat_id' => $chat_id,
-                'text' => "❌ Invalid JSON format! Please use:\n```json\n[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass162\"}\n]\n```",
-                'parse_mode' => 'Markdown'
-            ]);
-            exit;
-        }
-        $input_file = TEMP_DIR . "input_$chat_id.json";
-        file_put_contents($input_file, $file_content);
-        $total_count = count($credentials);
-        $text = "✅ *Found $total_count accounts, $username!* Choose how many to process:\n" .
-                "Your User ID: `$chat_id`\n" .
-                "Your profile photo: $photo_url\n" .
-                "━━━━━━━━━━━━━━━━━━\n" .
-                "≫ *NR CODEX BOTS* ⚡";
-        sendTelegramRequest('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => $text,
-            'parse_mode' => 'Markdown',
-            'reply_markup' => json_encode([
-                'inline_keyboard' => [
-                    [
-                        ['text' => 'GENERATE ONE ID', 'callback_data' => 'generate_one'],
-                        ['text' => 'GENERATE CUSTOM', 'callback_data' => 'generate_custom'],
-                        ['text' => 'GENERATE ALL IDS', 'callback_data' => 'generate_all']
-                    ]
-                ]
-            ])
-        ]);
-    } else {
-        sendTelegramRequest('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => "❌ Failed to download the file! Please try again or contact @nilay_ok."
-        ]);
-    }
-} elseif ($callback_data === 'generate_custom') {
-    if (!isChannelMember($chat_id)) {
-        sendTelegramRequest('sendMessageToronto', [
-            'chat_id' => $chat_id,
-            'text' => "😕 Please join " . CHANNEL_USERNAME . " to use this feature!",
-            'parse_mode' => 'Markdown',
-            'reply_markup' => json_encode([
-                'inline_keyboard' => [[['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership']]]
-            ])
-        ]);
-        exit;
-    }
-    saveState($chat_id, ['state' => 'awaiting_custom_count']);
-    sendTelegramRequest('sendMessage', [
-        'chat_id' => $chat_id,
-        'text' => "🔢 How many accounts do you want to process, $username?",
-        'parse_mode' => 'Markdown'
-    ]);
-} elseif ($callback_data === 'generate_all') {
-    if (!isChannelMember($chat_id)) {
-        sendTelegramRequest('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => "😕 Please join " . CHANNEL_USERNAME . " to use this feature!",
-            'parse_mode' => 'Markdown',
-            'reply_markup' => json_encode([
-                'inline_keyboard' => [[['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership']]]
-            ])
-        ]);
-        exit;
-    }
-    $input_file = TEMP_DIR . "input_$chat_id.json";
-    if (!file_exists($input_file)) {
-        sendTelegramRequest('sendMessage', [
-            'chat_id' => $chat_id,
-            'text' => "❌ No JSON file found! Please upload a file first."
-        ]);
-        exit;
-    }
-    $credentials = json_decode(file_get_contents($input_file), true);
+}
+
+// Get progress bar
+function getProgressBar($progress) {
+    $bars = [
+        10 => '▰▱▱▱▱▱▱▱▱▱ 10%',
+        20 => '▰▰▱▱▱▱▱▱▱▱ 20%',
+        30 => '▰▰▰▱▱▱▱▱▱▱ 30%',
+        40 => '▰▰▰▰▱▱▱▱▱▱ 40%',
+        50 => '▰▰▰▰▰▱▱▱▱▱ 50%',
+        60 => '▰▰▰▰▰▰▱▱▱▱ 60%',
+        70 => '▰▰▰▰▰▰▰▱▱▱ 70%',
+        80 => '▰▰▰▰▰▰▰▰▱▱ 80%',
+        90 => '▰▰▰▰▰▰▰▰▰▱ 90%',
+        100 => '▰▰▰▰▰▰▰▰▰▰ 100%'
+    ];
+    $progress = min(100, max(10, round($progress / 10) * 10));
+    return $bars[$progress];
+}
+
+// Process credentials
+function processCredentials($chat_id, $message_id, $username, $credentials, $total_count, $local_file) {
     if (!acquireLock($chat_id)) {
-        sendTelegramRequest('sendMessage', ['chat_id' => $chat_id, 'text' => "⏳ Please wait, another process is running!"]);
+        sendMessage($chat_id, "⏳ *Hold on, $username!* I’m still processing your previous request.\n\n" .
+                             "Please wait a minute and try again. If this persists, contact support! 😊");
+        return;
+    }
+
+    // Start processing
+    $start_time = microtime(true);
+    $results = [];
+    $failed_count = 0;
+    $invalid_count = 0;
+    $failed_credentials = [];
+
+    // Send initial processing message
+    $progress_message = sendMessage($chat_id, "⏳ *Working on it, $username!* $total_count guest IDs — please wait a moment...");
+    $progress_message_id = $progress_message['result']['message_id'];
+    $progress_bar_message = sendMessage($chat_id, getProgressBar(10));
+    $progress_bar_message_id = $progress_bar_message['result']['message_id'];
+
+    // Process credentials in chunks for concurrency
+    $chunks = array_chunk($credentials, CONCURRENT_REQUESTS);
+    $total_processed = 0;
+    $progress_messages = [
+        "🔥 *Blazing through, $username!* Fetching tokens...",
+        "⚡ *Almost there, $username!* Processing your accounts...",
+        "🚀 *Speeding up, $username!* Generating tokens...",
+    ];
+
+    foreach ($chunks as $chunk_index => $chunk) {
+        $mh = curl_multi_init();
+        $handles = [];
+
+        foreach ($chunk as $credential) {
+            $ch = curl_init();
+            $api_url = API_BASE_URLS[0];
+            $url = str_replace(['{Uid}', '{Password}'], [urlencode($credential['uid'] ?? ''), urlencode($credential['password'] ?? '')], $api_url);
+            curl_setopt($ch, CURLOPT_URL, $url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_multi_add_handle($mh, $ch);
+            $handles[] = $ch;
+        }
+
+        // Execute concurrent requests
+        do {
+            curl_multi_exec($mh, $running);
+            curl_multi_select($mh);
+        } while ($running > 0);
+
+        // Process responses
+        foreach ($handles as $index => $ch) {
+            $result = curl_multi_getcontent($ch);
+            $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $credential = $chunk[$index];
+
+            if ($http_code == 200) {
+                $data = json_decode($result, true);
+                if (isset($data['token'])) {
+                    $results[] = ['token' => $data['token']];
+                } else {
+                    $invalid_count++;
+                    $failed_credentials[] = ['uid' => $credential['uid'] ?? '', 'password' => $credential['password'] ?? '', 'reason' => 'Invalid: No token returned'];
+                }
+            } else {
+                // Retry logic for failed requests
+                processCredential($credential, $results, $failed_count, $invalid_count, $failed_credentials);
+            }
+
+            curl_multi_remove_handle($mh, $ch);
+            curl_close($ch);
+        }
+
+        curl_multi_close($mh);
+
+        // Update progress bar
+        $total_processed += count($chunk);
+        $progress = 10 + (($total_processed / $total_count) * 90);
+        $progress_bar = getProgressBar($progress);
+        editMessage($chat_id, $progress_bar_message_id, $progress_bar);
+        if ($chunk_index < count($progress_messages)) {
+            editMessage($chat_id, $progress_message_id, $progress_messages[$chunk_index]);
+        }
+    }
+
+    // Ensure final progress bar shows 100%
+    editMessage($chat_id, $progress_bar_message_id, getProgressBar(100));
+
+    // Calculate processing time
+    $processing_time = microtime(true) - $start_time;
+    $processing_time_min = number_format($processing_time / 60, 2); // Convert to minutes
+
+    // Prepare summary
+    $successful_count = count($results);
+    $summary = "🎉 *Done, $username!* Here is your output!\n" .
+               "━━━━━━━━━━━━━━━━━━\n" .
+               "📑 *JWT Token Summary*\n" .
+               "🔢 Total Accounts: $total_count\n" .
+               "✅ Successful: $successful_count\n" .
+               "❌ Failed: $failed_count\n" .
+               "⚠️ Invalid: $invalid_count\n" .
+               "⏱️ Time Taken: $processing_time_min min\n" .
+               "🌐 APIs Used: 1\n" .
+               "━━━━━━━━━━━━━━━━━━\n" .
+               "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡\n" .
+               "📄 Your tokens are ready in the file below.\n" .
+               "Want more tokens? Just upload another JSON file! 😊";
+
+    // Save results to a JSON file
+    $output_file = TEMP_DIR . "jwt_results_" . $chat_id . "_" . time() . ".json";
+    file_put_contents($output_file, json_encode($results, JSON_PRETTY_PRINT));
+
+    // Save failed credentials to a text file
+    $failed_file = TEMP_DIR . "failed_credentials_" . $chat_id . "_" . time() . ".txt";
+    $failed_content = "";
+    if (!empty($failed_credentials)) {
+        foreach ($failed_credentials as $cred) {
+            $failed_content .= "UID: {$cred['uid']}, Password: {$cred['password']}, Reason: {$cred['reason']}\n";
+        }
+        file_put_contents($failed_file, $failed_content);
+    }
+
+    // Send summary with Generate Again button
+    editMessage($chat_id, $progress_message_id, $summary, [
+        'inline_keyboard' => [
+            [
+                ['text' => 'Generate Again 🚀', 'callback_data' => 'generate_again'],
+            ],
+        ],
+    ]);
+
+    // Send output file
+    $send_result = sendDocument($chat_id, $output_file, "🎮 Your JWT tokens are here, $username! Enjoy! 😄");
+
+    // Send failed credentials file if it exists
+    if (!empty($failed_credentials)) {
+        sendDocument($chat_id, $failed_file, "⚠️ Failed/Invalid credentials, $username! Check the details below:");
+    }
+
+    // Clean up immediately
+    if (file_exists($local_file)) {
+        unlink($local_file);
+    }
+    if (file_exists($output_file)) {
+        unlink($output_file);
+    }
+    if (file_exists($failed_file)) {
+        unlink($failed_file);
+    }
+    releaseLock($chat_id);
+    // Clear state
+    $state_file = TEMP_DIR . "state_$chat_id.json";
+    $user_state = [];
+    file_put_contents($state_file, json_encode($user_state));
+
+    if (!$send_result['ok']) {
+        sendMessage($chat_id, "❌ *Oops, $username!* I processed your tokens, but couldn’t send the file. 😔\n\n" .
+                             "Error: " . ($send_result['description'] ?? 'Unknown error') . "\n\n" .
+                             "Please try again or contact support! 🙏");
         exit;
     }
-    $response = sendTelegramRequest('sendMessage', [
-        'chat_id' => $chat_id,
-        'text' => "Processing: ▱▱▱▱▱▱▱▱▱▱ 0%\n🔥 Starting token generation...",
-        'parse_mode' => 'Markdown'
-    ]);
-    $progress_message_id = $response['result']['message_id'];
-    processBulkCredentials($credentials, count($credentials), $chat_id, $progress_message_id);
-    releaseLock($chat_id);
-    unlink($input_file);
-} elseif ($callback_data === 'generate_again') {
-    clearState($chat_id);
-    $text = "🎉 *Ready for more, $username?* Upload a new JSON file or generate a single token!\n" .
-            "Your User ID: `$chat_id`\n" .
-            "Your profile photo: $photo_url\n" .
-            "━━━━━━━━━━━━━━━━━━\n" .
-            "≫ *NR CODEX BOTS* ⚡";
-    sendTelegramRequest('sendMessage', [
-        'chat_id' => $chat_id,
-        'text' => $text,
-        'parse_mode' => 'Markdown',
-        'reply_markup' => json_encode([
+}
+
+// Handle incoming updates
+$update = json_decode(file_get_contents('php://input'), true);
+if ($update) {
+    $chat_id = $update['message']['chat']['id'] ?? $update['callback_query']['message']['chat']['id'] ?? null;
+    $message = $update['message'] ?? null;
+    $callback_query = $update['callback_query'] ?? null;
+    $user = $update['message']['from'] ?? $update['callback_query']['from'] ?? null;
+    $username = $user['username'] ?? $user['first_name'] ?? 'User';
+
+    if (!$chat_id) {
+        exit;
+    }
+
+    // Store user state in a temporary file
+    $state_file = TEMP_DIR . "state_$chat_id.json";
+
+    // Load or initialize user state
+    $user_state = file_exists($state_file) ? json_decode(file_get_contents($state_file), true) : [];
+
+    // Handle /start command
+    if ($message && isset($message['text']) && $message['text'] == '/start') {
+        $welcome_text = "👋 *Hey $username!* Welcome to *" . BOT_NAME . "* — generating JWT tokens for Free Fire guest IDs! 🚀\n\n" .
+                        "I’m here to make your token generation fast.\n" .
+                        "*Step 1:* Join our official Telegram channel for the latest updates, support, and bot news.\n" .
+                        "*Step 2:* Join our official Telegram group for free likes and discussion.\n\n" .
+                        "▶️ Click below to join & verify your membership!\n" .
+                        "(You must be a member to access full features)\n";
+        $reply_markup = [
             'inline_keyboard' => [
                 [
-                    ['text' => 'GENERATE ONE ID', 'callback_data' => 'generate_one'],
-                    ['text' => 'GENERATE CUSTOM', 'callback_data' => 'generate_custom'],
-                    ['text' => 'GENERATE ALL IDS', 'callback_data' => 'generate_all']
-                ]
-            ]
-        ])
-    ]);
+                    ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
+                ],
+                [
+                    ['text' => 'TELEGRAM GROUP 🔥', 'url' => 'https://t.me/' . ltrim(GROUP_USERNAME, '@')],
+                ],
+                [
+                    ['text' => 'INSTAGRAM 🔥', 'url' => INSTAGRAM_URL],
+                ],
+                [
+                    ['text' => 'YOUTUBE ⚡', 'url' => YOUTUBE_URL],
+                ],
+                [
+                    ['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership'],
+                ],
+            ],
+        ];
+        sendMessage($chat_id, $welcome_text, $reply_markup);
+    }
+
+    // Handle callback query
+    if ($callback_query) {
+        $message_id = $callback_query['message']['message_id'];
+        $data = $callback_query['data'];
+
+        if ($data == 'check_membership') {
+            if (isChannelMember($chat_id)) {
+                $info_text = "🎉 *$username*! You're officially in *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡ — Let’s Go!\n\n" .
+                             "JWT Bot activated! Ready to fetch those tokens like a champ.\n\n" .
+                             "*Step 1:* Send me a .json file and file format like:\n\n" .
+                             "```json\n" .
+                             "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
+                             "```\n\n" .
+                             "Sit back — I’ll handle the rest:\n" .
+                             "🔁 Retries (up to 10x)\n" .
+                             "📦 Returns one failed file with all your Token\n" .
+                             "━━━━━━━━━━━\n" .
+                             "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡";
+                $reply_markup = [
+                    'inline_keyboard' => [
+                        [
+                            ['text' => 'GENERATE ONE ID', 'callback_data' => 'generate_one_id'],
+                            ['text' => 'GENERATE CUSTOM', 'callback_data' => 'custom_generate'],
+                        ],
+                        [
+                            ['text' => 'GENERATE ALL IDS', 'callback_data' => 'all_generate'],
+                            ['text' => 'GET API', 'url' => 'https://t.me/nilay_ok'],
+                        ],
+                    ],
+                ];
+                editMessage($chat_id, $message_id, $info_text, $reply_markup);
+            } else {
+                $error_text = "😕 *Oops, $username!* You haven’t joined yet.\n\n" .
+                              "Please join our channel to use the bot. It’s where we share updates and support! 📢\n\n" .
+                              "Click below to join and try again! 👇";
+                $reply_markup = [
+                    'inline_keyboard' => [
+                        [
+                            ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
+                            ['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership'],
+                        ],
+                    ],
+                ];
+                editMessage($chat_id, $message_id, $error_text, $reply_markup);
+            }
+        } elseif ($data == 'generate_one_id') {
+            $user_state['awaiting_single_uid'] = true;
+            file_put_contents($state_file, json_encode($user_state));
+            sendMessage($chat_id, "🔢 *Please provide the Guest ID, $username!*");
+        } elseif ($data == 'custom_generate') {
+            $user_state['awaiting_custom_count'] = true;
+            file_put_contents($state_file, json_encode($user_state));
+            sendMessage($chat_id, "🔢 *How many accounts do you want to process, $username?*\n\n" .
+                                 "Please enter a number (e.g., 1, 5, 10).");
+        } elseif ($data == 'all_generate') {
+            if (!isset($user_state['credentials'])) {
+                sendMessage($chat_id, "❌ *No JSON file found, $username!* Please upload a JSON file first.");
+                exit;
+            }
+            $credentials = $user_state['credentials'];
+            $local_file = $user_state['local_file'];
+            processCredentials($chat_id, $message_id, $username, $credentials, count($credentials), $local_file);
+        } elseif ($data == 'generate_again') {
+            $info_text = "🚀 *Ready to generate more tokens, $username?*\n\n" .
+                         "Send me another JSON file with your Free Fire guest ID credentials in this format:\n\n" .
+                         "```json\n" .
+                         "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
+                         "```\n\n" .
+                         "I’ll process them and send back your JWT tokens! 😄";
+            editMessage($chat_id, $message_id, $info_text);
+            $user_state = [];
+            file_put_contents($state_file, json_encode($user_state));
+        }
+    }
+
+    // Handle text input for custom count
+    if ($message && isset($message['text']) && isset($user_state['awaiting_custom_count']) && $user_state['awaiting_custom_count']) {
+        $count = intval($message['text']);
+        if ($count <= 0) {
+            sendMessage($chat_id, "❌ *Invalid number, $username!* Please enter a positive number.");
+            exit;
+        }
+        if (!isset($user_state['credentials'])) {
+            sendMessage($chat_id, "❌ *No JSON file found, $username!* Please upload a JSON file first.");
+            $user_state['awaiting_custom_count'] = false;
+            file_put_contents($state_file, json_encode($user_state));
+            exit;
+        }
+        $credentials = $user_state['credentials'];
+        $local_file = $user_state['local_file'];
+        $total_available = count($credentials);
+        if ($count > $total_available) {
+            sendMessage($chat_id, "❌ *Too many accounts requested, $username!* You have $total_available accounts in the file. Please enter a number up to $total_available.");
+            exit;
+        }
+        $user_state['awaiting_custom_count'] = false;
+        file_put_contents($state_file, json_encode($user_state));
+        processCredentials($chat_id, $message['message_id'], $username, array_slice($credentials, 0, $count), $count, $local_file);
+    }
+
+    // Handle text input for single ID
+    if ($message && isset($message['text']) && isset($user_state['awaiting_single_uid']) && $user_state['awaiting_single_uid']) {
+        $user_state['single_uid'] = $message['text'];
+        $user_state['awaiting_single_uid'] = false;
+        $user_state['awaiting_single_password'] = true;
+        file_put_contents($state_file, json_encode($user_state));
+        sendMessage($chat_id, "🔑 *Now provide the password for Guest ID {$user_state['single_uid']}, $username!*");
+    }
+
+    // Handle password input for single ID
+    if ($message && isset($message['text']) && isset($user_state['awaiting_single_password']) && $user_state['awaiting_single_password']) {
+        $uid = $user_state['single_uid'];
+        $password = $message['text'];
+        $user_state['awaiting_single_password'] = false;
+        file_put_contents($state_file, json_encode($user_state));
+
+        // Process single credential
+        $results = [];
+        $failed_count = 0;
+        $invalid_count = 0;
+        $failed_credentials = [];
+        $credential = ['uid' => $uid, 'password' => $password];
+        processCredential($credential, $results, $failed_count, $invalid_count, $failed_credentials);
+
+        if (!empty($results)) {
+            $token = $results[0]['token'];
+            $token_message = "🎉 *Success, $username!* Here’s your JWT token for Guest ID `$uid`:\n\n" .
+                             "```\n$token\n```\n\n" .
+                             "Copy the token above and use it! Want another? Click below! 😊";
+            $reply_markup = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => 'Generate Another 🚀', 'callback_data' => 'generate_one_id'],
+                    ],
+                ],
+            ];
+            sendMessage($chat_id, $token_message, $reply_markup);
+        } else {
+            $reason = $failed_credentials[0]['reason'] ?? 'Unknown error';
+            $error_message = "❌ *Oops, $username!* Couldn’t generate token for Guest ID `$uid`.\n\n" .
+                             "Reason: $reason\n\nTry again or contact support! 😔";
+            $reply_markup = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => 'Try Again 🚀', 'callback_data' => 'generate_one_id'],
+                    ],
+                ],
+            ];
+            sendMessage($chat_id, $error_message, $reply_markup);
+        }
+    }
+
+    // Handle JSON file upload
+    if ($message && isset($message['document']) && $message['document']['mime_type'] == 'application/json') {
+        if (!isChannelMember($chat_id)) {
+            sendMessage($chat_id, "😕 *Sorry, $username!* You need to join first.\n\n" .
+                                 "Click below to join and unlock the bot! 👇", [
+                'inline_keyboard' => [
+                    [
+                        ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
+                        ['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership'],
+                    ],
+                ],
+            ]);
+            exit;
+        }
+
+        if (!acquireLock($chat_id)) {
+            sendMessage($chat_id, "⏳ *Hold on, $username!* I’m still processing your previous request.\n\n" .
+                                 "Please wait a minute 😊");
+            exit;
+        }
+
+        // Download JSON file
+        $file_id = $message['document']['file_id'];
+        $file = sendTelegramRequest('getFile', ['file_id' => $file_id]);
+        if (!isset($file['result']['file_path'])) {
+            sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your file.\n\n" .
+                                 "Please try uploading it again. If the issue continues, contact support! 😔");
+            releaseLock($chat_id);
+            exit;
+        }
+
+        $file_path = $file['result']['file_path'];
+        $file_url = "https://api.telegram.org/file/bot" . BOT_TOKEN . "/$file_path";
+        $local_file = TEMP_DIR . "input_" . $chat_id . "_" . time() . ".json";
+        file_put_contents($local_file, file_get_contents($file_url));
+
+        // Parse JSON
+        $json_content = file_get_contents($local_file);
+        $credentials = json_decode($json_content, true);
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($credentials)) {
+            sendMessage($chat_id, "❌ *Invalid JSON, $username!* Your file doesn’t match the required format.\n\n" .
+                                 "Please use this format:\n" .
+                                 "```json\n" .
+                                 "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
+                                 "```\n\n" .
+                                 "Check your file and try again. Need help? Contact support! 😊");
+            unlink($local_file);
+            releaseLock($chat_id);
+            exit;
+        }
+
+        $total_count = count($credentials);
+        $user_state['credentials'] = $credentials;
+        $user_state['local_file'] = $local_file;
+        file_put_contents($state_file, json_encode($user_state));
+
+        // Send confirmation message with options
+        sendMessage($chat_id, "✅ *Found $total_count guest IDs, $username!* Choose an option:", [
+            'inline_keyboard' => [
+                [
+                    ['text' => 'GENERATE ONE ID', 'callback_data' => 'generate_one_id'],
+                    ['text' => 'GENERATE CUSTOM', 'callback_data' => 'custom_generate'],
+                ],
+                [
+                    ['text' => 'GENERATE ALL IDS', 'callback_data' => 'all_generate'],
+                ],
+            ],
+        ]);
+        releaseLock($chat_id);
+    }
 }
 
 ?>
