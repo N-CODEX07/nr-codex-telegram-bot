@@ -3,7 +3,6 @@
 // Bot configuration
 define('BOT_TOKEN', getenv('BOT_TOKEN') ?: '7336854248:AAFlHQIDHfg3keMtDhwNpxqQ_fBzOupbZGc'); // Use environment variable
 define('CHANNEL_USERNAME', '@nr_codex');
-define('GROUP_USERNAME', '@nr_codex_likegroup');
 define('BOT_NAME', 'NR CODEX JWT');
 define('API_BASE_URLS', [
     'https://akiru-jwt-10.vercel.app/token?uid={Uid}&password={Password}',
@@ -13,8 +12,8 @@ define('CONCURRENT_REQUESTS', 55);
 define('TEMP_DIR', sys_get_temp_dir() . '/jwt_bot/');
 
 // Social media links
-define('INSTAGRAM_URL', 'https://insta.openinapp.co/5v9hz');
-define('YOUTUBE_URL', 'https://yt.openinapp.co/3ferr');
+define('INSTAGRAM_URL', 'https://www.instagram.com/nr_codex?igsh=MjZlZWo2cGd3bDVk');
+define('YOUTUBE_URL', 'https://youtube.com/@nr_codex06?si=5pbP9qsDLfT4uTgf');
 
 // Ensure temp directory exists with secure permissions
 if (!file_exists(TEMP_DIR)) {
@@ -149,23 +148,8 @@ function isChannelMember($chat_id) {
         file_put_contents(TEMP_DIR . "error_log_$chat_id.txt", "getChatMember (channel) attempt " . ($i + 1) . " failed: " . json_encode($result) . "\n", FILE_APPEND);
         sleep(pow(2, $i)); // Exponential backoff: 1s, 2s, 4s
     }
-    return false;
-}
-
-// Check group membership with exponential backoff
-function isGroupMember($chat_id) {
-    $params = [
-        'chat_id' => GROUP_USERNAME,
-        'user_id' => $chat_id,
-    ];
-    for ($i = 0; $i < 3; $i++) {
-        $result = sendTelegramRequest('getChatMember', $params);
-        if (isset($result['ok']) && $result['ok']) {
-            return isset($result['result']) && in_array($result['result']['status'], ['member', 'administrator', 'creator']);
-        }
-        file_put_contents(TEMP_DIR . "error_log_$chat_id.txt", "getChatMember (group) attempt " . ($i + 1) . " failed: " . json_encode($result) . "\n", FILE_APPEND);
-        sleep(pow(2, $i)); // Exponential backoff: 1s, 2s, 4s
-    }
+    // Fallback message for persistent failure
+    file_put_contents(TEMP_DIR . "error_log_$chat_id.txt", "getChatMember (channel) failed after retries: " . json_encode($result) . "\n", FILE_APPEND);
     return false;
 }
 
@@ -423,17 +407,15 @@ if ($update) {
         $welcome_text = "👋 *Hey $username (ID: $chat_id)!* Welcome to *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗝𝗪𝗧* — generating JWT tokens for Free Fire guest IDs! 🚀\n\n" .
                         $photo_text .
                         "I’m here to make your token generation fast and easy.\n" .
-                        "📢 *Step 1:* Join our official Telegram channel for updates and support.\n" .
-                        "👥 *Step 2:* Join our Telegram group for discussions and free likes.\n\n" .
+                        "📢 *Step 1:* Join our official Telegram channel for updates and support.\n\n" .
                         "▶️ Click below to join & verify your membership!\n" .
-                        "*(You must be a member of both to access full features)*\n" .
+                        "*(You must be a member of the channel to access full features)*\n" .
                         "━━━━━━━━━━━━━━━━━━\n" .
                         "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡";
         $reply_markup = [
             'inline_keyboard' => [
                 [
                     ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
-                    ['text' => 'TELEGRAM GROUP 🔥', 'url' => 'https://t.me/' . ltrim(GROUP_USERNAME, '@')],
                 ],
                 [
                     ['text' => 'INSTAGRAM 🔥', 'url' => INSTAGRAM_URL],
@@ -453,10 +435,10 @@ if ($update) {
         $data = $callback_query['data'];
 
         if ($data == 'check_membership') {
-            if (isChannelMember($chat_id) && isGroupMember($chat_id)) {
+            if (isChannelMember($chat_id)) {
                 $photo_url = getUserProfilePhoto($chat_id);
                 $photo_text = $photo_url ? "Your profile photo: [View]($photo_url)\n" : "No profile photo available. Check your privacy settings (Settings > Privacy and Security > Profile Photos).\n";
-                $info_text = "🎉 *You're officially in, $username!* Welcome to *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕�_O𝗧𝗦* ⚡ — Let’s Go!\n\n" .
+                $info_text = "🎉 *You're officially in, $username!* Welcome to *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡ — Let’s Go!\n\n" .
                              "Your User ID: `$chat_id`\n" .
                              $photo_text .
                              "JWT Bot activated! Ready to fetch those tokens like a champ. 🚀\n\n" .
@@ -486,10 +468,9 @@ if ($update) {
                 ];
                 editMessage($chat_id, $message_id, $info_text, $reply_markup);
             } else {
-                $error_text = "😕 *Oops, $username!* You need to join both our channel and group:\n" .
-                              "- Channel: @" . ltrim(CHANNEL_USERNAME, '@') . "\n" .
-                              "- Group: @" . ltrim(GROUP_USERNAME, '@') . "\n\n" .
-                              "Also, ensure your group membership is visible in Telegram Settings > Privacy and Security > Groups & Channels > Who can see your groups: 'Everybody'.\n" .
+                $error_text = "😕 *Oops, $username!* You need to join our channel:\n" .
+                              "- Channel: @" . ltrim(CHANNEL_USERNAME, '@') . "\n\n" .
+                              "Also, ensure your channel membership is visible in Telegram Settings > Privacy and Security > Groups & Channels > Who can see your groups: 'Everybody'.\n" .
                               "If the issue persists, contact @nilay_ok for support.\n" .
                               "━━━━━━━━━━━━━━━━━━\n" .
                               "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡";
@@ -497,7 +478,6 @@ if ($update) {
                     'inline_keyboard' => [
                         [
                             ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
-                            ['text' => 'TELEGRAM GROUP 🔥', 'url' => 'https://t.me/' . ltrim(GROUP_USERNAME, '@')],
                         ],
                         [
                             ['text' => 'INSTAGRAM 🔥', 'url' => INSTAGRAM_URL],
@@ -537,7 +517,7 @@ if ($update) {
                          "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
                          "```\n" .
                          "━━━━━━━━━━━━━━━━━━\n" .
-                         "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡";
+                         "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 �𝗕𝗢𝗧𝗦* ⚡";
             editMessage($chat_id, $message_id, $info_text, [
                 'inline_keyboard' => [
                     [
@@ -609,7 +589,7 @@ if ($update) {
             sendMessage($chat_id, "❌ *Failed to generate token, $username!* Reason: $reason\n\n" .
                                  "Please try again or contact @nilay_ok for support.\n" .
                                  "━━━━━━━━━━━━━━━━━━\n" .
-                                 "≫ *�_N𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡", [
+                                 "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡", [
                 'inline_keyboard' => [
                     [
                         ['text' => 'Try Again 🚀', 'callback_data' => 'generate_one'],
@@ -648,22 +628,20 @@ if ($update) {
 
     // Handle JSON file upload
     if ($message && isset($message['document']) && $message['document']['mime_type'] == 'application/json') {
-        if (!isChannelMember($chat_id) || !isGroupMember($chat_id)) {
+        if (!isChannelMember($chat_id)) {
             $photo_url = getUserProfilePhoto($chat_id);
             $photo_text = $photo_url ? "Your profile photo: [View]($photo_url)\n" : "No profile photo available. Check your privacy settings (Settings > Privacy and Security > Profile Photos).\n";
-            sendMessage($chat_id, "😕 *Sorry, $username!* You need to join both our channel and group:\n" .
-                                 "- Channel: @" . ltrim(CHANNEL_USERNAME, '@') . "\n" .
-                                 "- Group: @" . ltrim(GROUP_USERNAME, '@') . "\n\n" .
+            sendMessage($chat_id, "😕 *Sorry, $username!* You need to join our channel:\n" .
+                                 "- Channel: @" . ltrim(CHANNEL_USERNAME, '@') . "\n\n" .
                                  "Your User ID: `$chat_id`\n" .
                                  $photo_text .
-                                 "Also, ensure your group membership is visible in Telegram Settings > Privacy and Security > Groups & Channels > Who can see your groups: 'Everybody'.\n" .
+                                 "Also, ensure your channel membership is visible in Telegram Settings > Privacy and Security > Groups & Channels > Who can see your groups: 'Everybody'.\n" .
                                  "Click below to join and unlock the bot! 👇\n" .
                                  "━━━━━━━━━━━━━━━━━━\n" .
-                                 "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡", [
+                                 "≫ *�_N𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡", [
                 'inline_keyboard' => [
                     [
                         ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
-                        ['text' => 'TELEGRAM GROUP 🔥', 'url' => 'https://t.me/' . ltrim(GROUP_USERNAME, '@')],
                     ],
                     [
                         ['text' => 'INSTAGRAM 🔥', 'url' => INSTAGRAM_URL],
@@ -725,7 +703,7 @@ if ($update) {
                                      "```\n\n" .
                                      "Check your file and try again! 😊\n" .
                                      "━━━━━━━━━━━━━━━━━━\n" .
-                                     "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡");
+                                     "≫ *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 �𝗕𝗢𝗧𝗦* ⚡");
                 unlink($local_file);
                 releaseLock($chat_id);
                 exit;
