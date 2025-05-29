@@ -8,7 +8,7 @@ define('BOT_NAME', 'NR CODEX JWT');
 define('INSTAGRAM_URL', 'https://www.instagram.com/nr_codex?igsh=MjZlZWo2cGd3bDVk');
 define('YOUTUBE_URL', 'https://youtube.com/@nr_codex06?si=5pbP9qsDLfT4uTgf');
 define('API_BASE_URLS', [
-    'https://nr-codex-jwtapi.vercel.app/token?uid={Uid}&password={Password}', // Replace VERCEL_URL with actual API endpoint
+    'https://nilay-jwt-ob49.vercel.app/token?uid={Uid}&password={Password}', // Replace VERCEL_URL with actual API endpoint
 ]);
 define('MAX_RETRIES', 10);
 define('CONCURRENT_REQUESTS', 55);
