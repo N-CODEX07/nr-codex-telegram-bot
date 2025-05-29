@@ -8,7 +8,7 @@ define('BOT_NAME', 'NR CODEX JWT');
 define('INSTAGRAM_URL', 'https://www.instagram.com/nr_codex?igsh=MjZlZWo2cGd3bDVk');
 define('YOUTUBE_URL', 'https://youtube.com/@nr_codex06?si=5pbP9qsDLfT4uTgf');
 define('API_BASE_URLS', [
-    'https://jwt-aditya.vercel.app/token?uid={uid}&password={password}', // Replace VERCEL_URL with actual API endpoint
+    'https://jwt-aditya.vercel.app/token?uid={Uid}&password={Password}', // API endpoint for JWT token generation
 ]);
 define('MAX_RETRIES', 10);
 define('CONCURRENT_REQUESTS', 55);
@@ -126,8 +126,8 @@ function isChannelMember($chat_id) {
 
 // Make API request to fetch JWT token
 function fetchJwtToken($uid, $password, $api_url) {
-    if (strpos($api_url, 'VERCEL_URL') !== false) {
-        logMessage("Error: API URL contains unresolved placeholder VERCEL_URL");
+    if (empty($api_url) || strpos($api_url, 'VERCEL_URL') !== false) {
+        logMessage("Error: Invalid or unresolved API URL: $api_url");
         return ['response' => '', 'http_code' => 0];
     }
     $url = str_replace(['{Uid}', '{Password}'], [urlencode($uid), urlencode($password)], $api_url);
@@ -139,7 +139,7 @@ function fetchJwtToken($uid, $password, $api_url) {
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $error = curl_error($ch);
     curl_close($ch);
-    logMessage("API request for UID $uid: HTTP code $http_code, URL: $url" . ($error ? ", Error: $error" : ""));
+    logMessage("API request for UID $uid: HTTP code $http_code, URL: $url, Response: " . substr($response, 0, 100) . ($error ? ", Error: $error" : ""));
     return ['response' => $response, 'http_code' => $http_code];
 }
 
@@ -635,16 +635,6 @@ if ($update) {
             $user_state['local_file'] = $local_file;
             file_put_contents($state_file, json_encode($user_state));
             logMessage("Stored $total_count credentials for chat_id $chat_id");
-
-            // Check for valid API URL
-            if (strpos(API_BASE_URLS[0], 'VERCEL_URL') !== false) {
-                sendMessage($chat_id, "❌ *Server error, $username!* The bot is not properly configured.\n\n" .
-                                     "Please contact support (@nilay_ok) to resolve this issue! 😔");
-                unlink($local_file);
-                releaseLock($chat_id);
-                logMessage("API URL contains VERCEL_URL placeholder, chat_id $chat_id");
-                exit;
-            }
 
             // Send confirmation message with options
             sendMessage($chat_id, "✅ *Found $total_count guest IDs in your JSON file, $username!* Choose an option:", [
