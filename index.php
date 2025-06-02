@@ -401,25 +401,28 @@ if ($update) {
         $welcome_text = "👋 *Hey $username!* Welcome to *" . BOT_NAME . "* — generating JWT tokens for Free Fire guest IDs! 🚀\n\n" .
                         "I’m here to make your token generation fast.\n" .
                         "*Step 1:* Join our official Telegram channel for the latest updates, support, and bot news.\n" .
-                        "*Step 2:* Join our official Telegram group for free likes and discussion.\n\n" .
+                        "*Step 2:* Join our official Telegram groups for free likes and discussion.\n\n" .
                         "▶️ Click below to join & verify your membership!\n" .
                         "(You must be a member to access full features)\n";
         $reply_markup = [
             'inline_keyboard' => [
                 [
-                    ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
+                    ['text' => 'IG 𝗡𝗥_𝗖𝗢𝗗𝗘𝗫 ⚡', 'url' => INSTAGRAM_URL],
                 ],
                 [
-                    ['text' => 'TELEGRAM GROUP 🔥', 'url' => 'https://t.me/' . ltrim(GROUP_USERNAME, '@')],
+                    ['text' => 'YT 𝗡𝗥_𝗖𝗢𝗗𝗘𝗫𝟬𝟲 ⚡', 'url' => YOUTUBE_URL],
                 ],
                 [
-                    ['text' => 'INSTAGRAM 🔥', 'url' => INSTAGRAM_URL],
+                    ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗟𝗜𝗞𝗘 ⚡', 'url' => 'https://t.me/+kmjgWZwLAaM5NDU9'],
                 ],
                 [
-                    ['text' => 'YOUTUBE ⚡', 'url' => YOUTUBE_URL],
+                    ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗗𝗜𝗦𝗖𝗨𝗦𝗦𝗜𝗢𝗡 ⚡', 'url' => 'https://t.me/' . ltrim(GROUP_USERNAME, '@')],
                 ],
                 [
-                    ['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership'],
+                    ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦 ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
+                ],
+                [
+                    ['text' => '𝗩𝗘𝗥𝗜𝗙𝗬 𝗠𝗘𝗠𝗕𝗘𝗥𝗦𝗛𝗜𝗣 ✅', 'callback_data' => 'check_membership'],
                 ],
             ],
         ];
@@ -460,8 +463,8 @@ if ($update) {
                 $reply_markup = [
                     'inline_keyboard' => [
                         [
-                            ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
-                            ['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership'],
+                            ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦 ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
+                            ['text' => '𝗩𝗘𝗥𝗜𝗙𝗬 𝗠𝗘𝗠𝗕𝗘𝗥𝗦𝗛𝗜𝗣 ✅', 'callback_data' => 'check_membership'],
                         ],
                     ],
                 ];
@@ -534,8 +537,8 @@ if ($update) {
                                      [
                                          'inline_keyboard' => [
                                              [
-                                                 ['text' => 'TELEGRAM CHANNEL ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
-                                                 ['text' => 'CLICK & VERIFY ✅', 'callback_data' => 'check_membership'],
+                                                 ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦 ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
+                                                 ['text' => '𝗩𝗘𝗥𝗜𝗙𝗬 𝗠𝗘𝗠𝗕𝗘𝗥𝗦𝗛𝗜𝗣 ✅', 'callback_data' => 'check_membership'],
                                              ],
                                          ],
                                      ]);
