@@ -164,7 +164,7 @@ function processCredential($credential, &$results, &$failed_count, &$invalid_cou
         if ($result['http_code'] == 200) {
             $data = json_decode($result['response'], true);
             if (isset($data['token'])) {
-                $results[] = ['uid' => $uid, 'token' => $data['token']];
+                $results[] = ['token' => $data['token']]; // Store only the token in an object
                 $success = true;
                 logMessage("Success: Token generated for UID $uid");
             } else {
@@ -261,7 +261,7 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
             if ($http_code == 200) {
                 $data = json_decode($result, true);
                 if (isset($data['token'])) {
-                    $results[] = ['uid' => $credential['uid'] ?? '', 'token' => $data['token']];
+                    $results[] = ['token' => $data['token']]; // Store only the token in an object
                     logMessage("Success: Token generated for UID " . ($credential['uid'] ?? ''));
                 } else {
                     $invalid_count++;
