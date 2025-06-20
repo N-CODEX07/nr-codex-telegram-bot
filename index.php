@@ -8,7 +8,7 @@ define('BOT_NAME', 'NR CODEX JWT');
 define('INSTAGRAM_URL', 'https://www.instagram.com/nr_codex?igsh=MjZlZWo2cGd3bDVk');
 define('YOUTUBE_URL', 'https://youtube.com/@nr_codex06?si=5pbP9qsDLfT4uTgf');
 define('API_BASE_URLS', [
-    'https://uditanshu-jwt-ob49.vercel.app/token?uid={uid}&password={password}, // API endpoint for JWT token generation
+    'https://uditanshu-jwt-ob49.vercel.app/token?uid={uid}&password={password}' // Removed trailing comma
 ]);
 define('MAX_RETRIES', 10);
 define('CONCURRENT_REQUESTS', 55);
@@ -31,7 +31,7 @@ function acquireLock($chat_id) {
     $lock_file = TEMP_DIR . "lock_$chat_id";
     if (file_exists($lock_file) && (time() - filemtime($lock_file)) < 300) {
         logMessage("Lock exists for chat_id $chat_id, age: " . (time() - filemtime($lock_file)) . " seconds");
-        return false; // Lock exists and is recent (5 minutes)
+        return false;
     }
     file_put_contents($lock_file, time());
     logMessage("Lock acquired for chat_id $chat_id");
@@ -130,7 +130,7 @@ function fetchJwtToken($uid, $password, $api_url) {
         logMessage("Error: Invalid or unresolved API URL: $api_url");
         return ['response' => '', 'http_code' => 0];
     }
-    $url = str_replace(['{Uid}', '{Password}'], [urlencode($uid), urlencode($password)], $api_url);
+    $url = str_replace(['{uid}', '{password}'], [urlencode($uid), urlencode($password)], $api_url);
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -163,8 +163,8 @@ function processCredential($credential, &$results, &$failed_count, &$invalid_cou
 
         if ($result['http_code'] == 200) {
             $data = json_decode($result['response'], true);
-            if (isset($data['token'])) {
-                $results[] = ['token' => $data['token']]; // Store only the token in an object
+            if (isset($data['token']) && !empty($data['token'])) {
+                $results[] = ['token' => $data['token']];
                 $success = true;
                 logMessage("Success: Token generated for UID $uid");
             } else {
@@ -218,9 +218,15 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
 
     // Send initial processing message
     $progress_message = sendMessage($chat_id, "⏳ *Working on it, $username!* $total_count guest IDs — please wait a moment...");
-    $progress_message_id = $progress_message['result']['message_id'];
+    $progress_message_id = $progress_message['result']['message_id'] ?? null;
     $progress_bar_message = sendMessage($chat_id, getProgressBar(10));
-    $progress_bar_message_id = $progress_bar_message['result']['message_id'];
+    $progress_bar_message_id = $progress_bar_message['result']['message_id'] ?? null;
+
+    if (!$progress_message_id || !$progress_bar_message_id) {
+        sendMessage($chat_id, "❌ *Error, $username!* Failed to initialize processing messages.");
+        releaseLock($chat_id);
+        return;
+    }
 
     // Process credentials in chunks for concurrency
     $chunks = array_chunk($credentials, CONCURRENT_REQUESTS);
@@ -238,7 +244,7 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
         foreach ($chunk as $credential) {
             $ch = curl_init();
             $api_url = API_BASE_URLS[0];
-            $url = str_replace(['{Uid}', '{Password}'], [urlencode($credential['uid'] ?? ''), urlencode($credential['password'] ?? '')], $api_url);
+            $url = str_replace(['{uid}', '{password}'], [urlencode($credential['uid'] ?? ''), urlencode($credential['password'] ?? '')], $api_url);
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 10);
@@ -260,8 +266,8 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
 
             if ($http_code == 200) {
                 $data = json_decode($result, true);
-                if (isset($data['token'])) {
-                    $results[] = ['token' => $data['token']]; // Store only the token in an object
+                if (isset($data['token']) && !empty($data['token'])) {
+                    $results[] = ['token' => $data['token']];
                     logMessage("Success: Token generated for UID " . ($credential['uid'] ?? ''));
                 } else {
                     $invalid_count++;
@@ -269,7 +275,6 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
                     logMessage("Invalid: No token returned for UID " . ($credential['uid'] ?? ''));
                 }
             } else {
-                // Retry logic for failed requests
                 processCredential($credential, $results, $failed_count, $invalid_count, $failed_credentials);
             }
 
@@ -294,7 +299,7 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
 
     // Calculate processing time
     $processing_time = microtime(true) - $start_time;
-    $processing_time_min = number_format($processing_time / 60, 2); // Convert to minutes
+    $processing_time_min = number_format($processing_time / 60, 2);
 
     // Prepare summary
     $successful_count = count($results);
@@ -345,20 +350,15 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
         sendDocument($chat_id, $failed_file, "⚠️ Failed/Invalid credentials, $username! Check the details below:");
     }
 
-    // Clean up immediately
-    if (file_exists($local_file)) {
-        unlink($local_file);
-        logMessage("Deleted input file: $local_file");
-    }
-    if (file_exists($output_file)) {
-        unlink($output_file);
-        logMessage("Deleted output file: $output_file");
-    }
-    if (file_exists($failed_file)) {
-        unlink($failed_file);
-        logMessage("Deleted failed file: $failed_file");
+    // Clean up
+    foreach ([$local_file, $output_file, $failed_file] as $file) {
+        if (file_exists($file)) {
+            unlink($file);
+            logMessage("Deleted file: $file");
+        }
     }
     releaseLock($chat_id);
+
     // Clear state
     $state_file = TEMP_DIR . "state_$chat_id.json";
     $user_state = [];
@@ -370,295 +370,297 @@ function processCredentials($chat_id, $message_id, $username, $credentials, $tot
         sendMessage($chat_id, "❌ *Oops, $username!* I processed your tokens, but couldn’t send the file. 😔\n\n" .
                              "Error: $error\n\nPlease try again or contact support! 🙏");
         logMessage("Failed to send document to chat_id $chat_id: $error");
-        exit;
     }
 }
 
 // Handle incoming updates
 $update = json_decode(file_get_contents('php://input'), true);
-if ($update) {
-    $chat_id = $update['message']['chat']['id'] ?? $update['callback_query']['message']['chat']['id'] ?? null;
-    $message = $update['message'] ?? null;
-    $callback_query = $update['callback_query'] ?? null;
-    $user = $update['message']['from'] ?? $update['callback_query']['from'] ?? null;
-    $username = $user['username'] ?? $user['first_name'] ?? 'User';
+if (!$update) {
+    logMessage("No update received");
+    exit;
+}
 
-    logMessage("Received update for chat_id $chat_id, username: $username");
+$chat_id = $update['message']['chat']['id'] ?? $update['callback_query']['message']['chat']['id'] ?? null;
+$message = $update['message'] ?? null;
+$callback_query = $update['callback_query'] ?? null;
+$user = $update['message']['from'] ?? $update['callback_query']['from'] ?? null;
+$username = $user['username'] ?? $user['first_name'] ?? 'User';
 
-    if (!$chat_id) {
-        logMessage("Error: No chat_id found in update");
-        exit;
-    }
+logMessage("Received update for chat_id $chat_id, username: $username");
 
-    // Store user state in a temporary file
-    $state_file = TEMP_DIR . "state_$chat_id.json";
+if (!$chat_id) {
+    logMessage("Error: No chat_id found in update");
+    exit;
+}
 
-    // Load or initialize user state
-    $user_state = file_exists($state_file) ? json_decode(file_get_contents($state_file), true) : [];
+// Store user state in a temporary file
+$state_file = TEMP_DIR . "state_$chat_id.json";
 
-    // Handle /start command
-    if ($message && isset($message['text']) && $message['text'] == '/start') {
-        $welcome_text = "👋 *Hey $username!* Welcome to *" . BOT_NAME . "* — generating JWT tokens for Free Fire guest IDs! 🚀\n\n" .
-                        "I’m here to make your token generation fast.\n" .
-                        "*Step 1:* Join our official Telegram channel for the latest updates, support, and bot news.\n" .
-                        "*Step 2:* Join our official Telegram groups for free likes and discussion.\n\n" .
-                        "▶️ Click below to join & verify your membership!\n" .
-                        "(You must be a member to access full features)\n";
-        $reply_markup = [
-            'inline_keyboard' => [
-                [
-                    ['text' => 'IG 𝗡𝗥_𝗖𝗢𝗗𝗘𝗫 ⚡', 'url' => INSTAGRAM_URL],
-                ],
-                [
-                    ['text' => 'YT 𝗡𝗥_𝗖𝗢𝗗𝗘𝗫𝟬𝟲 ⚡', 'url' => YOUTUBE_URL],
-                ],
-                [
-                    ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗟𝗜𝗞𝗘 ⚡', 'url' => 'https://t.me/+kmjgWZwLAaM5NDU9'],
-                ],
-                [
-                    ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗗𝗜𝗦𝗖𝗨𝗦𝗦𝗜𝗢𝗡 ⚡', 'url' => 'https://t.me/' . ltrim(GROUP_USERNAME, '@')],
-                ],
-                [
-                    ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦 ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
-                ],
-                [
-                    ['text' => '𝗩𝗘𝗥𝗜𝗙𝗬 𝗠𝗘𝗠𝗕𝗘𝗥𝗦𝗛𝗜𝗣 ✅', 'callback_data' => 'check_membership'],
-                ],
+// Load or initialize user state
+$user_state = file_exists($state_file) ? json_decode(file_get_contents($state_file), true) : [];
+
+// Handle /start command
+if ($message && isset($message['text']) && $message['text'] == '/start') {
+    $welcome_text = "👋 *Hey $username!* Welcome to *" . BOT_NAME . "* — generating JWT tokens for Free Fire guest IDs! 🚀\n\n" .
+                    "I’m here to make your token generation fast.\n" .
+                    "*Step 1:* Join our official Telegram channel for the latest updates, support, and bot news.\n" .
+                    "*Step 2:* Join our official Telegram groups for free likes and discussion.\n\n" .
+                    "▶️ Click below to join & verify your membership!\n" .
+                    "(You must be a member to access full features)\n";
+    $reply_markup = [
+        'inline_keyboard' => [
+            [
+                ['text' => 'IG 𝗡𝗥_𝗖𝗢𝗗𝗘𝗫 ⚡', 'url' => INSTAGRAM_URL],
             ],
-        ];
-        sendMessage($chat_id, $welcome_text, $reply_markup);
-    }
+            [
+                ['text' => 'YT 𝗡𝗥_𝗖𝗢𝗗𝗘𝗫𝟬𝟲 ⚡', 'url' => YOUTUBE_URL],
+            ],
+            [
+                ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗟𝗜𝗞𝗘 ⚡', 'url' => 'https://t.me/+kmjgWZwLAaM5NDU9'],
+            ],
+            [
+                ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗗𝗜𝗦𝗖𝗨𝗦𝗦𝗜𝗢𝗡 ⚡', 'url' => 'https://t.me/' . ltrim(GROUP_USERNAME, '@')],
+            ],
+            [
+                ['text' => 'TG �_N𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦 ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
+            ],
+            [
+                ['text' => '𝗩𝗘𝗥𝗜𝗙𝗬 𝗠𝗘𝗠𝗕𝗘𝗥𝗦𝗛𝗜𝗣 ✅', 'callback_data' => 'check_membership'],
+            ],
+        ],
+    ];
+    sendMessage($chat_id, $welcome_text, $reply_markup);
+}
 
-    // Handle callback query
-    if ($callback_query) {
-        $message_id = $callback_query['message']['message_id'];
-        $data = $callback_query['data'];
-        logMessage("Callback query received: $data");
+// Handle callback query
+if ($callback_query) {
+    $message_id = $callback_query['message']['message_id'];
+    $data = $callback_query['data'];
+    logMessage("Callback query received: $data");
 
-        if ($data == 'check_membership') {
-            if (isChannelMember($chat_id)) {
-                $info_text = "🎉 *$username*! You're officially in *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡ — Let’s Go!\n\n" .
-                             "JWT Bot activated! Ready to fetch those tokens like a champ.\n\n" .
-                             "*Step 1:* Send me a JSON file (any name, e.g., data.json) with your Free Fire guest ID credentials in this format:\n\n" .
-                             "```json\n" .
-                             "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
-                             "```\n\n" .
-                             "Sit back — I’ll handle the rest:\n" .
-                             "🔁 Retries (up to 10x)\n" .
-                             "📦 Returns one failed file with all your Tokens\n" .
-                             "━━━━━━━━━━━\n" .
-                             "𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦⚡";
-                $reply_markup = [
-                    'inline_keyboard' => [
-                        [
-                            ['text' => 'GET API', 'url' => 'https://t.me/nilay_ok'],
-                        ],
-                    ],
-                ];
-                editMessage($chat_id, $message_id, $info_text, $reply_markup);
-            } else {
-                $error_text = "😩 *Oops, $username!* You haven’t joined yet.\n\n" .
-                              "Please join our channel to use the bot. It’s where we share updates and support! 📢\n\n" .
-                              "Click below to join and try again! 👇";
-                $reply_markup = [
-                    'inline_keyboard' => [
-                        [
-                            ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦 ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
-                            ['text' => '𝗩𝗘𝗥𝗜𝗙𝗬 𝗠𝗘𝗠𝗕𝗘𝗥𝗦𝗛𝗜𝗣 ✅', 'callback_data' => 'check_membership'],
-                        ],
-                    ],
-                ];
-                editMessage($chat_id, $message_id, $error_text, $reply_markup);
-            }
-        } elseif ($data == 'custom_generate') {
-            $user_state['awaiting_custom_count'] = true;
-            file_put_contents($state_file, json_encode($user_state));
-            sendMessage($chat_id, "🔢 *How many accounts do you want to process, $username?*\n\n" .
-                                 "Please enter a number (e.g., 1, 5, 10).");
-        } elseif ($data == 'all_generate') {
-            if (empty($user_state['credentials'])) {
-                sendMessage($chat_id, "❌ *No JSON file found, $username!* Please upload a JSON file first.");
-                logMessage("No credentials found for all_generate, chat_id $chat_id");
-                exit;
-            }
-            $credentials = $user_state['credentials'];
-            $local_file = $user_state['local_file'];
-            processCredentials($chat_id, $message_id, $username, $credentials, count($credentials), $local_file);
-        } elseif ($data == 'generate_again') {
-            $info_text = "🚀 *Ready to generate more tokens, $username?*\n\n" .
-                         "Send me another JSON file (any name, e.g., data.json) with your Free Fire guest ID credentials in this format:\n\n" .
+    if ($data == 'check_membership') {
+        if (isChannelMember($chat_id)) {
+            $info_text = "🎉 *$username*! You're officially in *𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦* ⚡ — Let’s Go!\n\n" .
+                         "JWT Bot activated! Ready to fetch those tokens like a champ.\n\n" .
+                         "*Step 1:* Send me a JSON file (any name, e.g., data.json) with your Free Fire guest ID credentials in this format:\n\n" .
                          "```json\n" .
                          "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
                          "```\n\n" .
-                         "I’ll process them and send back your JWT tokens! 😄";
-            editMessage($chat_id, $message_id, $info_text);
-            $user_state = [];
-            file_put_contents($state_file, json_encode($user_state));
-            logMessage("Reset state for generate_again, chat_id $chat_id");
+                         "Sit back — I’ll handle the rest:\n" .
+                         "🔁 Retries (up to 10x)\n" .
+                         "📦 Returns one failed file with all your Tokens\n" .
+                         "━━━━━━━━━━━\n" .
+                         "𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦⚡";
+            $reply_markup = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => 'GET API', 'url' => 'https://t.me/nilay_ok'],
+                    ],
+                ],
+            ];
+            editMessage($chat_id, $message_id, $info_text, $reply_markup);
+        } else {
+            $error_text = "😩 *Oops, $username!* You haven’t joined yet.\n\n" .
+                          "Please join our channel to use the bot. It’s where we share updates and support! 📢\n\n" .
+                          "Click below to join and try again! 👇";
+            $reply_markup = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦 ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
+                        ['text' => '𝗩𝗘𝗥𝗜𝗙𝗬 𝗠𝗘𝗠𝗕𝗘𝗥𝗦𝗛𝗜𝗣 ✅', 'callback_data' => 'check_membership'],
+                    ],
+                ],
+            ];
+            editMessage($chat_id, $message_id, $error_text, $reply_markup);
         }
-    }
-
-    // Handle text input for custom count
-    if ($message && isset($message['text']) && isset($user_state['awaiting_custom_count']) && $user_state['awaiting_custom_count']) {
-        $count = intval($message['text']);
-        if ($count <= 0) {
-            sendMessage($chat_id, "❌ *Invalid number, $username!* Please enter a positive number.");
-            logMessage("Invalid custom count: $count, chat_id $chat_id");
-            exit;
-        }
+    } elseif ($data == 'custom_generate') {
+        $user_state['awaiting_custom_count'] = true;
+        file_put_contents($state_file, json_encode($user_state));
+        sendMessage($chat_id, "🔢 *How many accounts do you want to process, $username?*\n\n" .
+                             "Please enter a number (e.g., 1, 5, 10).");
+    } elseif ($data == 'all_generate') {
         if (empty($user_state['credentials'])) {
             sendMessage($chat_id, "❌ *No JSON file found, $username!* Please upload a JSON file first.");
-            $user_state['awaiting_custom_count'] = false;
-            file_put_contents($state_file, json_encode($user_state));
-            logMessage("No credentials for custom count, chat_id $chat_id");
+            logMessage("No credentials found for all_generate, chat_id $chat_id");
             exit;
         }
         $credentials = $user_state['credentials'];
         $local_file = $user_state['local_file'];
-        $total_available = count($credentials);
-        if ($count > $total_available) {
-            sendMessage($chat_id, "❌ *Too many accounts requested, $username!* You have $total_available accounts in the file. Please enter a number up to $total_available.");
-            logMessage("Custom count $count exceeds available $total_available, chat_id $chat_id");
-            exit;
-        }
-        $user_state['awaiting_custom_count'] = false;
+        processCredentials($chat_id, $message_id, $username, $credentials, count($credentials), $local_file);
+    } elseif ($data == 'generate_again') {
+        $info_text = "🚀 *Ready to generate more tokens, $username?*\n\n" .
+                     "Send me another JSON file (any name, e.g., data.json) with your Free Fire guest ID credentials in this format:\n\n" .
+                     "```json\n" .
+                     "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
+                     "```\n\n" .
+                     "I’ll process them and send back your JWT tokens! 😄";
+        editMessage($chat_id, $message_id, $info_text);
+        $user_state = [];
         file_put_contents($state_file, json_encode($user_state));
-        processCredentials($chat_id, $message['message_id'], $username, array_slice($credentials, 0, $count), $count, $local_file);
+        logMessage("Reset state for generate_again, chat_id $chat_id");
+    }
+}
+
+// Handle text input for custom count
+if ($message && isset($message['text']) && isset($user_state['awaiting_custom_count']) && $user_state['awaiting_custom_count']) {
+    $count = intval($message['text']);
+    if ($count <= 0) {
+        sendMessage($chat_id, "❌ *Invalid number, $username!* Please enter a positive number.");
+        logMessage("Invalid custom count: $count, chat_id $chat_id");
         exit;
     }
+    if (empty($user_state['credentials'])) {
+        sendMessage($chat_id, "❌ *No JSON file found, $username!* Please upload a JSON file first.");
+        $user_state['awaiting_custom_count'] = false;
+        file_put_contents($state_file, json_encode($user_state));
+        logMessage("No credentials for custom count, chat_id $chat_id");
+        exit;
+    }
+    $credentials = $user_state['credentials'];
+    $local_file = $user_state['local_file'];
+    $total_available = count($credentials);
+    if ($count > $total_available) {
+        sendMessage($chat_id, "❌ *Too many accounts requested, $username!* You have $total_available accounts in the file. Please enter a number up to $total_available.");
+        logMessage("Custom count $count exceeds available $total_available, chat_id $chat_id");
+        exit;
+    }
+    $user_state['awaiting_custom_count'] = false;
+    file_put_contents($state_file, json_encode($user_state));
+    processCredentials($chat_id, $message['message_id'], $username, array_slice($credentials, 0, $count), $count, $local_file);
+    exit;
+}
 
-    // Handle JSON file upload
-    if ($message && !empty($message['document']) && $message['document']['mime_type'] === 'application/json') {
-        logMessage("JSON file uploaded by chat_id $chat_id, file_name: " . ($message['document']['file_name'] ?? 'unknown'));
-        try {
-            if (!isChannelMember($chat_id)) {
-                sendMessage($chat_id, "😩 *Sorry, $username!* You need to join first.\n\n" .
-                                     "Please join our official channel to unlock the bot! 👇",
-                                     [
-                                         'inline_keyboard' => [
-                                             [
-                                                 ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦 ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
-                                                 ['text' => '𝗩𝗘𝗥𝗜𝗙𝗬 𝗠𝗘𝗠𝗕𝗘𝗥𝗦𝗛𝗜𝗣 ✅', 'callback_data' => 'check_membership'],
-                                             ],
+// Handle JSON file upload
+if ($message && !empty($message['document']) && $message['document']['mime_type'] === 'application/json') {
+    logMessage("JSON file uploaded by chat_id $chat_id, file_name: " . ($message['document']['file_name'] ?? 'unknown'));
+    try {
+        if (!isChannelMember($chat_id)) {
+            sendMessage($chat_id, "😩 *Sorry, $username!* You need to join first.\n\n" .
+                                 "Please join our official channel to unlock the bot! 👇",
+                                 [
+                                     'inline_keyboard' => [
+                                         [
+                                             ['text' => 'TG 𝗡𝗥 𝗖𝗢𝗗𝗘𝗫 𝗕𝗢𝗧𝗦 ⚡', 'url' => 'https://t.me/' . ltrim(CHANNEL_USERNAME, '@')],
+                                             ['text' => '𝗩𝗘𝗥𝗜𝗙𝗬 𝗠𝗘𝗠𝗕𝗘𝗥𝗦𝗛𝗜𝗣 ✅', 'callback_data' => 'check_membership'],
                                          ],
-                                     ]);
-                logMessage("User not a channel member, chat_id $chat_id");
-                exit;
-            }
-
-            if (!acquireLock($chat_id)) {
-                sendMessage($chat_id, "⏳ *Hold on, $username!* I’m still processing your previous request.\n\n" .
-                                     "Please wait a minute or contact support (@nilay_ok) to clear the lock! 😊");
-                logMessage("Failed to acquire lock for chat_id $chat_id");
-                exit;
-            }
-
-            // Download JSON file
-            $file_id = $message['document']['file_id'];
-            $file = sendTelegramRequest('getFile', ['file_id' => $file_id]);
-            if (!isset($file['result']['file_path'])) {
-                sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your JSON file.\n\n" .
-                                     "Error: File not found on Telegram servers.\n\nPlease try uploading it again or contact support (@nilay_ok)! 😔");
-                releaseLock($chat_id);
-                logMessage("Failed to get file path for file_id $file_id, chat_id $chat_id");
-                exit;
-            }
-
-            $file_path = $file['result']['file_path'];
-            $file_url = "https://api.telegram.org/file/bot" . BOT_TOKEN . "/$file_path";
-            $local_file = TEMP_DIR . "input_" . $chat_id . "_" . time() . ".json";
-            $file_content = @file_get_contents($file_url);
-            if ($file_content === false) {
-                sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your JSON file.\n\n" .
-                                     "Error: Failed to fetch file from Telegram.\n\nPlease try uploading it again or contact support (@nilay_ok)! 😔");
-                releaseLock($chat_id);
-                logMessage("Failed to download file from $file_url, chat_id $chat_id");
-                exit;
-            }
-            file_put_contents($local_file, $file_content);
-            logMessage("Downloaded JSON file to $local_file");
-
-            // Parse JSON
-            $json_content = file_get_contents($local_file);
-            if (empty($json_content)) {
-                sendMessage($chat_id, "❌ *Invalid JSON, $username!* Your file is empty.\n\n" .
-                                     "Please upload a valid JSON file with this format:\n" .
-                                     "```json\n" .
-                                     "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
-                                     "```\n\nCheck your file and try again. Need help? Contact support (@nilay_ok)! 😊");
-                unlink($local_file);
-                releaseLock($chat_id);
-                logMessage("Empty JSON file, chat_id $chat_id");
-                exit;
-            }
-
-            $credentials = json_decode($json_content, true);
-            if (json_last_error() !== JSON_ERROR_NONE || !is_array($credentials)) {
-                $json_error = json_last_error_msg();
-                sendMessage($chat_id, "❌ *Invalid JSON, $username!* Your file doesn’t match the required format.\n\n" .
-                                     "Error: $json_error\n\nPlease use this format:\n" .
-                                     "```json\n" .
-                                     "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
-                                     "```\n\nCheck your file and try again. Need help? Contact support (@nilay_ok)! 😊");
-                unlink($local_file);
-                releaseLock($chat_id);
-                logMessage("JSON parsing error: $json_error, chat_id $chat_id");
-                exit;
-            }
-
-            if (empty($credentials)) {
-                sendMessage($chat_id, "❌ *No accounts found, $username!* Your JSON file contains no credentials.\n\n" .
-                                     "Please upload a valid JSON file with this format:\n" .
-                                     "```json\n" .
-                                     "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
-                                     "```\n\nCheck your file and try again. Need help? Contact support (@nilay_ok)! 😊");
-                unlink($local_file);
-                releaseLock($chat_id);
-                logMessage("Empty credentials array, chat_id $chat_id");
-                exit;
-            }
-
-            // Validate credential structure
-            foreach ($credentials as $cred) {
-                if (!isset($cred['uid']) || !isset($cred['password'])) {
-                    sendMessage($chat_id, "❌ *Invalid JSON structure, $username!* Each entry must have 'uid' and 'password' fields.\n\n" .
-                                         "Please upload a valid JSON file with this format:\n\n" .
-                                         "```json\n" .
-                                         "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
-                                         "```\n\nCheck your file and try again. Contact support (@nilay_ok)! 😊");
-                    unlink($local_file);
-                    releaseLock($chat_id);
-                    logMessage("Invalid JSON structure: Missing uid or password, chat_id $chat_id");
-                    exit;
-                }
-            }
-
-            $total_count = count($credentials);
-            $user_state['credentials'] = $credentials;
-            $user_state['local_file'] = $local_file;
-            file_put_contents($state_file, json_encode($user_state));
-            logMessage("Stored $total_count credentials for chat_id $chat_id");
-
-            // Send confirmation message with options
-            sendMessage($chat_id, "✅ *Found $total_count guest IDs in your JSON file, $username!* Choose an option:", [
-                'inline_keyboard' => [
-                    [
-                        ['text' => 'GENERATE CUSTOM', 'callback_data' => 'custom_generate'],
-                        ['text' => 'GENERATE ALL IDS', 'callback_data' => 'all_generate'],
-                    ],
-                ],
-            ]);
-            releaseLock($chat_id);
-        } catch (Exception $e) {
-            sendMessage($chat_id, "❌ *Unexpected error, $username!* Something went wrong while processing your file.\n\n" .
-                                "Error: " . $e->getMessage() . "\n\nPlease try again or contact support (@nilay_ok)! 😔");
-            if (isset($local_file) && file_exists($local_file)) {
-                unlink($local_file);
-            }
-            releaseLock($chat_id);
-            logMessage("Exception in JSON handling: " . $e->getMessage() . ", chat_id $chat_id");
+                                     ],
+                                 ]);
+            logMessage("User not a channel member, chat_id $chat_id");
             exit;
         }
+
+        if (!acquireLock($chat_id)) {
+            sendMessage($chat_id, "⏳ *Hold on, $username!* I’m still processing your previous request.\n\n" .
+                                 "Please wait a minute or contact support (@nilay_ok) to clear the lock! 😊");
+            logMessage("Failed to acquire lock for chat_id $chat_id");
+            exit;
+        }
+
+        // Download JSON file
+        $file_id = $message['document']['file_id'];
+        $file = sendTelegramRequest('getFile', ['file_id' => $file_id]);
+        if (!isset($file['result']['file_path'])) {
+            sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your JSON file.\n\n" .
+                                 "Error: File not found on Telegram servers.\n\nPlease try uploading it again or contact support (@nilay_ok)! 😔");
+            releaseLock($chat_id);
+            logMessage("Failed to get file path for file_id $file_id, chat_id $chat_id");
+            exit;
+        }
+
+        $file_path = $file['result']['file_path'];
+        $file_url = "https://api.telegram.org/file/bot" . BOT_TOKEN . "/$file_path";
+        $local_file = TEMP_DIR . "input_" . $chat_id . "_" . time() . ".json";
+        $file_content = @file_get_contents($file_url);
+        if ($file_content === false) {
+            sendMessage($chat_id, "❌ *Oops, $username!* I couldn’t download your JSON file.\n\n" .
+                                 "Error: Failed to fetch file from Telegram.\n\nPlease try uploading it again or contact support (@nilay_ok)! 😔");
+            releaseLock($chat_id);
+            logMessage("Failed to download file from $file_url, chat_id $chat_id");
+            exit;
+        }
+        file_put_contents($local_file, $file_content);
+        logMessage("Downloaded JSON file to $local_file");
+
+        // Parse JSON
+        $json_content = file_get_contents($local_file);
+        if (empty($json_content)) {
+            sendMessage($chat_id, "❌ *Invalid JSON, $username!* Your file is empty.\n\n" .
+                                 "Please upload a valid JSON file with this format:\n" .
+                                 "```json\n" .
+                                 "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
+                                 "```\n\nCheck your file and try again. Need help? Contact support (@nilay_ok)! 😊");
+            unlink($local_file);
+            releaseLock($chat_id);
+            logMessage("Empty JSON file, chat_id $chat_id");
+            exit;
+        }
+
+        $credentials = json_decode($json_content, true);
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($credentials)) {
+            $json_error = json_last_error_msg();
+            sendMessage($chat_id, "❌ *Invalid JSON, $username!* Your file doesn’t match the required format.\n\n" .
+                                 "Error: $json_error\n\nPlease use this format:\n" .
+                                 "```json\n" .
+                                 "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
+                                 "```\n\nCheck your file and try again. Need help? Contact support (@nilay_ok)! 😊");
+            unlink($local_file);
+            releaseLock($chat_id);
+            logMessage("JSON parsing error: $json_error, chat_id $chat_id");
+            exit;
+        }
+
+        if (empty($credentials)) {
+            sendMessage($chat_id, "❌ *No accounts found, $username!* Your JSON file contains no credentials.\n\n" .
+                                 "Please upload a valid JSON file with this format:\n" .
+                                 "```json\n" .
+                                 "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
+                                 "```\n\nCheck your file and try again. Need help? Contact support (@nilay_ok)! 😊");
+            unlink($local_file);
+            releaseLock($chat_id);
+            logMessage("Empty credentials array, chat_id $chat_id");
+            exit;
+        }
+
+        // Validate credential structure
+        foreach ($credentials as $cred) {
+            if (!isset($cred['uid']) || !isset($cred['password'])) {
+                sendMessage($chat_id, "❌ *Invalid JSON structure, $username!* Each entry must have 'uid' and 'password' fields.\n\n" .
+                                     "Please upload a valid JSON file with this format:\n\n" .
+                                     "```json\n" .
+                                     "[\n  {\"uid\": \"YourUID1\", \"password\": \"YourPass1\"},\n  {\"uid\": \"YourUID2\", \"password\": \"YourPass2\"}\n]\n" .
+                                     "```\n\nCheck your file and try again. Contact support (@nilay_ok)! 😊");
+                unlink($local_file);
+                releaseLock($chat_id);
+                logMessage("Invalid JSON structure: Missing uid or password, chat_id $chat_id");
+                exit;
+            }
+        }
+
+        $total_count = count($credentials);
+        $user_state['credentials'] = $credentials;
+        $user_state['local_file'] = $local_file;
+        file_put_contents($state_file, json_encode($user_state));
+        logMessage("Stored $total_count credentials for chat_id $chat_id");
+
+        // Send confirmation message with options
+        sendMessage($chat_id, "✅ *Found $total_count guest IDs in your JSON file, $username!* Choose an option:", [
+            'inline_keyboard' => [
+                [
+                    ['text' => 'GENERATE CUSTOM', 'callback_data' => 'custom_generate'],
+                    ['text' => 'GENERATE ALL IDS', 'callback_data' => 'all_generate'],
+                ],
+            ],
+        ]);
+        releaseLock($chat_id);
+    } catch (Exception $e) {
+        sendMessage($chat_id, "❌ *Unexpected error, $username!* Something went wrong while processing your file.\n\n" .
+                            "Error: " . $e->getMessage() . "\n\nPlease try again or contact support (@nilay_ok)! 😔");
+        if (isset($local_file) && file_exists($local_file)) {
+            unlink($local_file);
+        }
+        releaseLock($chat_id);
+        logMessage("Exception in JSON handling: " . $e->getMessage() . ", chat_id $chat_id");
+        exit;
     }
 }
 
